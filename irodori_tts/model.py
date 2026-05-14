@@ -27,13 +27,17 @@ def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
 def get_timestep_embedding(timestep: torch.Tensor, dim: int) -> torch.Tensor:
     assert dim % 2 == 0
     half = dim // 2
-    freqs = 1000.0 * torch.exp(
-        -torch.log(torch.tensor(10000.0, device=timestep.device, dtype=torch.float32))
-        * torch.arange(half, device=timestep.device, dtype=torch.float32)
-        / half
-    )
+    freqs = _make_timestep_freqs(half=half, device=timestep.device)
     args = timestep[:, None].float() * freqs[None, :]
     return torch.cat([torch.cos(args), torch.sin(args)], dim=-1).to(timestep.dtype)
+
+
+def _make_timestep_freqs(*, half: int, device: torch.device) -> torch.Tensor:
+    return 1000.0 * torch.exp(
+        -torch.log(torch.tensor(10000.0, device=device, dtype=torch.float32))
+        * torch.arange(half, device=device, dtype=torch.float32)
+        / half
+    )
 
 
 class RMSNorm(nn.Module):
@@ -642,6 +646,9 @@ class TextToLatentRFDiT(nn.Module):
         self.register_buffer(
             "_freqs_cis_cache", torch.empty(0, 0, dtype=torch.complex64), persistent=False
         )
+        self.register_buffer(
+            "_timestep_freqs_cache", torch.empty(0, dtype=torch.float32), persistent=False
+        )
 
     def _rope_freqs(self, seq_len: int, device: torch.device) -> torch.Tensor:
         cache = self._freqs_cis_cache
@@ -649,6 +656,32 @@ class TextToLatentRFDiT(nn.Module):
             cache = precompute_freqs_cis(self.head_dim, seq_len).to(device)
             self._freqs_cis_cache = cache
         return cache[:seq_len]
+
+    def _timestep_freqs(self, device: torch.device) -> torch.Tensor:
+        half = self.cfg.timestep_embed_dim // 2
+        cache = self._timestep_freqs_cache
+        if cache.device != device or cache.shape[0] != half:
+            cache = _make_timestep_freqs(half=half, device=device)
+            self._timestep_freqs_cache = cache
+        return cache
+
+    def timestep_cond_embed(
+        self,
+        t: torch.Tensor,
+        *,
+        dtype: torch.dtype | None = None,
+    ) -> torch.Tensor:
+        if self.cfg.timestep_embed_dim % 2 != 0:
+            raise ValueError("timestep_embed_dim must be even.")
+        if t.ndim == 0:
+            t = t[None]
+        freqs = self._timestep_freqs(t.device)
+        args = t[:, None].float() * freqs[None, :]
+        t_embed = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        if dtype is not None:
+            t_embed = t_embed.to(dtype=dtype)
+        cond_embed = self.cond_module(t_embed)
+        return cond_embed[:, None, :]
 
     @staticmethod
     def _prepend_masked_mean_token(
@@ -743,10 +776,14 @@ class TextToLatentRFDiT(nn.Module):
         caption_mask: torch.Tensor | None = None,
         latent_mask: torch.Tensor | None = None,
         context_kv_cache: list[tuple[torch.Tensor, ...]] | None = None,
+        cond_embed: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        t_embed = get_timestep_embedding(t, self.cfg.timestep_embed_dim).to(dtype=x_t.dtype)
-        cond_embed = self.cond_module(t_embed)
-        cond_embed = cond_embed[:, None, :]
+        if cond_embed is None:
+            cond_embed = self.timestep_cond_embed(t, dtype=x_t.dtype)
+        elif cond_embed.ndim == 2:
+            cond_embed = cond_embed[:, None, :]
+        if cond_embed.device != x_t.device or cond_embed.dtype != x_t.dtype:
+            cond_embed = cond_embed.to(device=x_t.device, dtype=x_t.dtype)
 
         x = self.in_proj(x_t)
         freqs = self._rope_freqs(x.shape[1], x.device)

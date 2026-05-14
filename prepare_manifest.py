@@ -21,6 +21,7 @@ from datasets import Audio, load_dataset
 from tqdm import tqdm
 
 from irodori_tts.codec import DACVAECodec
+from irodori_tts.model_cache import data_path, hf_datasets_cache_dir, project_path
 from irodori_tts.text_normalization import normalize_text
 
 
@@ -485,21 +486,20 @@ def _run_worker(
 
     torch.manual_seed(args.seed + rank)
 
-    output_manifest = _ranked_path(
-        Path(args.output_manifest).expanduser().resolve(), rank, world_size
-    )
+    output_manifest = _ranked_path(project_path(args.output_manifest), rank, world_size)
     output_manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest_base = output_manifest.parent
 
-    latent_dir = Path(args.latent_dir).expanduser().resolve()
+    latent_dir = project_path(args.latent_dir)
     latent_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = project_path(args.cache_dir) if args.cache_dir else hf_datasets_cache_dir()
 
     ds = load_dataset(
         path=args.dataset,
         name=args.config,
         split=args.split,
         data_files=_parse_data_files(args.data_files),
-        cache_dir=args.cache_dir,
+        cache_dir=str(cache_dir),
         trust_remote_code=args.trust_remote_code,
         streaming=args.streaming,
     )
@@ -796,9 +796,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--output-manifest", required=True, help="Output JSONL path for latent manifest"
+        "--output-manifest",
+        default=str(data_path("train_manifest.jsonl")),
+        help="Output JSONL path for latent manifest",
     )
-    parser.add_argument("--latent-dir", required=True, help="Directory to write latent .pt files")
+    parser.add_argument(
+        "--latent-dir",
+        default=str(data_path("latents")),
+        help="Directory to write latent .pt files",
+    )
     parser.add_argument("--codec-repo", default="Aratako/Semantic-DACVAE-Japanese-32dim")
     parser.add_argument(
         "--codec-deterministic-encode",
@@ -920,7 +926,11 @@ def main() -> None:
         default=False,
         help="Pass trust_remote_code to datasets.load_dataset",
     )
-    parser.add_argument("--cache-dir", default=None, help="HF datasets cache dir")
+    parser.add_argument(
+        "--cache-dir",
+        default=str(hf_datasets_cache_dir()),
+        help="HF datasets cache dir",
+    )
     args = parser.parse_args()
     if args.flush_every < 0:
         raise ValueError("--flush-every must be >= 0.")
@@ -957,7 +967,7 @@ def main() -> None:
         mp.spawn(_spawn_worker, args=(num_gpus, args), nprocs=num_gpus, join=True)
         if args.merge_output:
             _merge_shards(
-                Path(args.output_manifest).expanduser().resolve(),
+                project_path(args.output_manifest),
                 num_gpus,
                 keep_shards=args.keep_shards,
             )

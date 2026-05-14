@@ -15,6 +15,7 @@ from irodori_tts.inference_runtime import (
     resolve_cfg_scales,
     save_wav,
 )
+from irodori_tts.model_cache import hf_hub_cache_dir, outputs_path, project_path
 
 FIXED_SECONDS = 30.0
 
@@ -56,6 +57,7 @@ def _resolve_checkpoint_path(args: argparse.Namespace) -> str:
     checkpoint_path = hf_hub_download(
         repo_id=repo_id,
         filename="model.safetensors",
+        cache_dir=str(hf_hub_cache_dir()),
     )
     print(
         f"[checkpoint] downloaded model.safetensors from hf://{repo_id} -> {checkpoint_path}",
@@ -86,7 +88,7 @@ def main() -> None:
         default=None,
         help="Optional caption/style-control text for caption-enabled voice-design checkpoints.",
     )
-    parser.add_argument("--output-wav", default="output.wav")
+    parser.add_argument("--output-wav", default=str(outputs_path("output.wav")))
     parser.add_argument(
         "--model-device",
         default=default_runtime_device(),
@@ -412,10 +414,10 @@ def main() -> None:
 
     print(f"[seed] used_seed: {result.used_seed}")
     if int(args.num_candidates) == 1:
-        out_path = save_wav(args.output_wav, result.audio, result.sample_rate)
+        out_path = save_wav(project_path(args.output_wav), result.audio, result.sample_rate)
         print(f"Saved: {out_path}")
     else:
-        base_path = Path(str(args.output_wav))
+        base_path = project_path(args.output_wav)
         suffix = base_path.suffix if base_path.suffix else ".wav"
         for i, audio in enumerate(result.audios, start=1):
             out_path = base_path.with_name(f"{base_path.stem}_{i:03d}{suffix}")

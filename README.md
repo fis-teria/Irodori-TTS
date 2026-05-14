@@ -52,6 +52,8 @@ uv sync
 
 **Note**: For Linux/Windows with CUDA, PyTorch is automatically installed from the cu128 index. For macOS (MPS) or CPU-only usage, `uv sync` will install the default PyTorch build.
 
+Downloaded model, codec, tokenizer, dataset cache, and other model-related snapshots are stored under `model_data/` in this project by default. Generated audio, training checkpoints, and converted checkpoints are stored under `outputs/`; prepared manifests and latents default to `data/`. Set `IRODORI_TTS_MODEL_DIR`, `IRODORI_TTS_OUTPUT_DIR`, or `IRODORI_TTS_DATA_DIR` to override these locations.
+
 ## Quick Start
 
 ### Simple Inference
@@ -104,6 +106,24 @@ The hosted VoiceDesign demo is available at [Aratako/Irodori-TTS-500M-v2-VoiceDe
 
 `gradio_app.py` is for `Aratako/Irodori-TTS-500M-v2`. `gradio_app_voicedesign.py` is for `Aratako/Irodori-TTS-500M-v2-VoiceDesign`.
 
+### SBV2-Compatible Reference Audio Wrapper
+
+For tools that already speak the SBV2 HTTP API, start the compatibility wrapper:
+
+```bash
+uv run python irodori_wrapper_server.py --reference-audio path/to/reference.wav
+```
+
+It listens on `http://127.0.0.1:6000` by default and exposes `/models/info`, `/voice`, `/jobs/cancel`, `/jobs/resume`, `/jobs/status`, `/status`, and `/shutdown`. Multiple selectable reference voices can be exposed with `--reference-audio-dir path/to/refs`.
+
+For automatic reference selection, put emotion reference files in the reference directory using names such as `normal.wav`, `angry.wav`, `sad.wav`, and `happy.wav` (Japanese aliases like `普通.wav`, `怒.wav`, `哀.wav`, and `楽.wav` also work):
+
+```bash
+uv run python irodori_wrapper_server.py --reference-audio-dir path/to/refs
+```
+
+With `--emotion-auto` enabled by default, `/voice` detects text markers such as `[普通]`, `[怒]`, `[哀]`, `[楽]`, `[normal]`, `[angry]`, `[sad]`, `[happy]`, and common emoji/kaomoji markers, then uses the matching reference audio. These markers are stripped from the synthesis text by default; use `--no-emotion-strip-markers` to keep them.
+
 ## Inference
 
 ### CLI
@@ -144,7 +164,7 @@ uv run python infer.py \
 | `--checkpoint` / `--hf-checkpoint` | (required, either one) | Local checkpoint file or Hugging Face repo id |
 | `--text` | (required) | Text to synthesize |
 | `--caption` | None | Optional style-control text for VoiceDesign checkpoints |
-| `--output-wav` | `output.wav` | Output waveform path |
+| `--output-wav` | `outputs/output.wav` | Output waveform path |
 | `--ref-wav` | None | Reference waveform path for speaker conditioning |
 | `--ref-latent` | None | Pre-computed reference latent (`.pt`) for speaker conditioning |
 | `--no-ref` | False | Disable speaker reference conditioning |

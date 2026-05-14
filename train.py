@@ -37,6 +37,7 @@ from irodori_tts.lora import (
     train_config_uses_lora,
 )
 from irodori_tts.model import TextToLatentRFDiT
+from irodori_tts.model_cache import outputs_path, project_path, transformers_cache_dir
 from irodori_tts.optim import build_optimizer, build_scheduler, current_lr
 from irodori_tts.progress import TrainProgress
 from irodori_tts.rf import (
@@ -329,6 +330,7 @@ def validate_pretrained_backbone_dim(
         repo_id,
         trust_remote_code=False,
         local_files_only=local_files_only,
+        cache_dir=str(transformers_cache_dir()),
     )
     hidden_size = getattr(text_cfg, "hidden_size", None)
     if hidden_size is None:
@@ -386,6 +388,7 @@ def initialize_embedding_from_pretrained(
         dtype=torch.float32,
         low_cpu_mem_usage=True,
         local_files_only=local_files_only,
+        cache_dir=str(transformers_cache_dir()),
     )
     pretrained_embedding = text_backbone.get_input_embeddings()
     if pretrained_embedding is None:
@@ -718,7 +721,7 @@ def _load_checkpoint_payload(path: str | Path, *, map_location) -> dict:
 
 
 def _normalize_checkpoint_path(path: str | Path) -> Path:
-    return Path(os.path.abspath(str(Path(path).expanduser())))
+    return project_path(path)
 
 
 def _lora_field_cli_explicit(field: str, args: argparse.Namespace, raw_argv: list[str]) -> bool:
@@ -1106,7 +1109,7 @@ def main() -> None:
         required=True,
         help="JSONL manifest with text+latent_path (optional speaker_id for reference sampling).",
     )
-    parser.add_argument("--output-dir", default="outputs/irodori_tts")
+    parser.add_argument("--output-dir", default=str(outputs_path("irodori_tts")))
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
         "--precision",
@@ -1493,7 +1496,13 @@ def main() -> None:
     if cli_provided(raw_argv, "--seed"):
         train_cfg = replace(train_cfg, seed=args.seed)
 
-    resume_path = Path(args.resume).expanduser() if args.resume is not None else None
+    train_cfg = replace(
+        train_cfg,
+        manifest_path=str(project_path(train_cfg.manifest_path)),
+        output_dir=str(project_path(train_cfg.output_dir)),
+    )
+
+    resume_path = project_path(args.resume) if args.resume is not None else None
     resume_train_cfg = None
     resume_base_init = None
     if args.resume is not None:

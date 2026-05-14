@@ -8,6 +8,8 @@ import torch
 import torchaudio
 from huggingface_hub import hf_hub_download
 
+from .model_cache import hf_hub_cache_dir
+
 _CODEC_DEFAULT = object()
 
 
@@ -73,7 +75,11 @@ class DACVAECodec:
             location = location[len("hf://") :]
         if not Path(location).exists() and "/" in location and not location.endswith(".pth"):
             try:
-                location = hf_hub_download(repo_id=location, filename="weights.pth")
+                location = hf_hub_download(
+                    repo_id=location,
+                    filename="weights.pth",
+                    cache_dir=str(hf_hub_cache_dir()),
+                )
                 print(f"[codec] dacvae: hf://{repo_id} -> {location}", flush=True)
             except Exception:
                 # Let DACVAE.load surface a clearer error if this is not a valid path/repo.

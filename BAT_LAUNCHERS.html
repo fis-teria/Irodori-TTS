@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Irodori-TTS BAT Launchers</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #1d2430;
+      --muted: #5d6675;
+      --line: #d8dde6;
+      --accent: #2267a9;
+      --accent-soft: #e8f1fa;
+      --code: #f0f3f7;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Meiryo", sans-serif;
+      line-height: 1.65;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 36px 0 56px;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 34px 0 12px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--line);
+      font-size: 22px;
+      line-height: 1.3;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 24px 0 8px;
+      font-size: 18px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 8px 0;
+    }
+
+    .lead {
+      color: var(--muted);
+      max-width: 840px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      margin: 16px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      display: table;
+    }
+
+    th,
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      background: var(--accent-soft);
+      color: #163e66;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: var(--code);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.95em;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 10px 0;
+      padding: 12px;
+      border-radius: 8px;
+      background: #202734;
+      color: #eef3f8;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+    }
+
+    ul {
+      margin: 8px 0 8px 22px;
+      padding: 0;
+    }
+
+    .note {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 12px 14px;
+      border-radius: 6px;
+      color: #173d60;
+    }
+
+    @media (max-width: 760px) {
+      main {
+        width: min(100% - 20px, 1120px);
+        padding-top: 24px;
+      }
+
+      h1 {
+        font-size: 26px;
+      }
+
+      table,
+      thead,
+      tbody,
+      th,
+      td,
+      tr {
+        display: block;
+      }
+
+      thead {
+        display: none;
+      }
+
+      tr {
+        border-bottom: 1px solid var(--line);
+      }
+
+      td {
+        border-bottom: 0;
+        padding: 8px 12px;
+      }
+
+      td::before {
+        content: attr(data-label);
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Irodori-TTS BAT Launchers</h1>
+      <p class="lead">Irodori-TTS直下にある各 <code>.bat</code> が何を起動するのか、どの用途で使うのかをまとめたページです。</p>
+    </header>
+
+    <section>
+      <h2>一覧</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>bat</th>
+            <th>起動/実行するもの</th>
+            <th>用途</th>
+            <th>URL/ポート</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-label="bat"><code>setup.bat</code></td>
+            <td data-label="起動/実行するもの"><code>uv sync</code></td>
+            <td data-label="用途"><code>.venv</code> 作成・依存関係インストール。WebUIやAPIは起動しません。</td>
+            <td data-label="URL/ポート">なし</td>
+          </tr>
+          <tr>
+            <td data-label="bat"><code>run.bat</code></td>
+            <td data-label="起動/実行するもの">起動メニュー</td>
+            <td data-label="用途">Reference Audio WebUI / VoiceDesign WebUI を選択して起動します。</td>
+            <td data-label="URL/ポート">選択先による</td>
+          </tr>
+          <tr>
+            <td data-label="bat"><code>run_webui_reference_audio.bat</code></td>
+            <td data-label="起動/実行するもの"><code>gradio_app.py</code></td>
+            <td data-label="用途">参照音声を使う通常Irodori-TTS WebUIを起動します。</td>
+            <td data-label="URL/ポート"><code>http://localhost:7860</code></td>
+          </tr>
+          <tr>
+            <td data-label="bat"><code>run_webui_voice_design.bat</code></td>
+            <td data-label="起動/実行するもの"><code>gradio_app_voicedesign.py</code></td>
+            <td data-label="用途">captionで声質・話し方を指定するVoiceDesign WebUIを起動します。</td>
+            <td data-label="URL/ポート"><code>http://localhost:7861</code></td>
+          </tr>
+          <tr>
+            <td data-label="bat"><code>run_irodori_wrapper_server.bat</code></td>
+            <td data-label="起動/実行するもの"><code>irodori_wrapper_server.py</code></td>
+            <td data-label="用途">SBV2互換のバックエンドAPIサーバーを起動します。GUIバッチTTSなどからHTTPで使う用途です。</td>
+            <td data-label="URL/ポート"><code>http://127.0.0.1:6000</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>共通の保存先</h2>
+      <p>各batは、起動時にIrodori-TTSのプロジェクトディレクトリへ移動してから実行します。そのため、別ディレクトリからbatを呼び出しても、モデルや出力先は基本的にこのIrodori-TTSディレクトリ内に収まります。</p>
+      <table>
+        <thead>
+          <tr>
+            <th>ディレクトリ</th>
+            <th>内容</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-label="ディレクトリ"><code>.venv/</code></td>
+            <td data-label="内容">Python仮想環境</td>
+          </tr>
+          <tr>
+            <td data-label="ディレクトリ"><code>model_data/</code></td>
+            <td data-label="内容">HuggingFaceモデル、codec、tokenizer、各種キャッシュ</td>
+          </tr>
+          <tr>
+            <td data-label="ディレクトリ"><code>outputs/</code></td>
+            <td data-label="内容">生成音声、学習checkpoint、ログ</td>
+          </tr>
+          <tr>
+            <td data-label="ディレクトリ"><code>data/</code></td>
+            <td data-label="内容">manifest、latentなどの学習用データ</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>各batの詳細</h2>
+
+      <div class="panel">
+        <h3><code>setup.bat</code></h3>
+        <p>依存関係をインストールするための初期セットアップ用batです。WebUIやAPIサーバーは起動しません。</p>
+        <ul>
+          <li><code>uv</code> がPATH上にあるか確認します。</li>
+          <li><code>.venv</code> をIrodori-TTS直下に作成/更新します。</li>
+          <li><code>model_data/</code>, <code>outputs/</code>, <code>data/</code> などの保存先を作成します。</li>
+          <li><code>uv sync</code> を実行して依存パッケージを同期します。</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3><code>run.bat</code></h3>
+        <p>WebUIを選択して起動するためのメニューbatです。バックエンドAPI用の <code>irodori_wrapper_server.py</code> は起動しません。</p>
+        <ul>
+          <li><code>1</code>: Reference Audio WebUI</li>
+          <li><code>2</code>: VoiceDesign WebUI</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3><code>run_webui_reference_audio.bat</code></h3>
+        <p>参照音声を使う通常Irodori-TTSのGradio WebUIを起動します。</p>
+        <pre><code>uv run python gradio_app.py --server-name 0.0.0.0 --server-port 7860</code></pre>
+        <p>アクセス先: <code>http://localhost:7860</code></p>
+        <p>用途は、ブラウザ上でReference Audioモデルを試し、参照音声で声質や話し方を寄せることです。</p>
+      </div>
+
+      <div class="panel">
+        <h3><code>run_webui_voice_design.bat</code></h3>
+        <p>VoiceDesign用のGradio WebUIを起動します。参照音声ではなくcaptionで声質や話し方を指定します。</p>
+        <pre><code>uv run python gradio_app_voicedesign.py --server-name 0.0.0.0 --server-port 7861</code></pre>
+        <p>アクセス先: <code>http://localhost:7861</code></p>
+        <p>用途は、「落ち着いた女性の声」「近い距離感」などのcaptionでスタイルを指定することです。</p>
+      </div>
+
+      <div class="panel">
+        <h3><code>run_irodori_wrapper_server.bat</code></h3>
+        <p>SBV2互換のバックエンドAPIサーバーを起動します。ブラウザ操作用ではなく、<code>gui_batch_tts.py</code> のような外部ツールからHTTPで叩くためのものです。</p>
+        <pre><code>uv run python irodori_wrapper_server.py %*</code></pre>
+        <p>既定のURL: <code>http://127.0.0.1:6000</code></p>
+        <p>主なAPI:</p>
+        <ul>
+          <li><code>GET /models/info</code></li>
+          <li><code>POST /models/refresh</code></li>
+          <li><code>GET</code> / <code>POST /voice</code></li>
+          <li><code>GET /status</code></li>
+          <li><code>POST /jobs/cancel</code></li>
+          <li><code>POST /jobs/resume</code></li>
+          <li><code>GET /jobs/status</code></li>
+          <li><code>POST /shutdown</code></li>
+        </ul>
+        <p>参照音声を1つ指定する例:</p>
+        <pre><code>run_irodori_wrapper_server.bat --reference-audio path\to\voice.wav</code></pre>
+        <p>普通・怒・哀・楽の参照音声を自動選択する例:</p>
+        <pre><code>run_irodori_wrapper_server.bat --reference-audio-dir path\to\refs</code></pre>
+        <p>参照音声ディレクトリ例:</p>
+        <pre><code>refs/
+  normal.wav
+  angry.wav
+  sad.wav
+  happy.wav</code></pre>
+        <pre><code>refs/
+  普通.wav
+  怒.wav
+  哀.wav
+  楽.wav</code></pre>
+        <p>複数サーバーを起動する場合は、ポートを分けます。</p>
+        <pre><code>run_irodori_wrapper_server.bat --port 6000 --reference-audio-dir refs_a
+run_irodori_wrapper_server.bat --port 6001 --reference-audio-dir refs_b</code></pre>
+        <p class="note">同じポートで複数起動はできません。複数プロセスを起動すると、モデルもプロセスごとに読み込まれるため、VRAM/RAM使用量も増えます。</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>どれを使うべきか</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>やりたいこと</th>
+            <th>使うbat</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-label="やりたいこと">初期セットアップしたい</td>
+            <td data-label="使うbat"><code>setup.bat</code></td>
+          </tr>
+          <tr>
+            <td data-label="やりたいこと">手動でWebUIを選んで起動したい</td>
+            <td data-label="使うbat"><code>run.bat</code></td>
+          </tr>
+          <tr>
+            <td data-label="やりたいこと">参照音声つきでブラウザから試したい</td>
+            <td data-label="使うbat"><code>run_webui_reference_audio.bat</code></td>
+          </tr>
+          <tr>
+            <td data-label="やりたいこと">caption指定でブラウザから試したい</td>
+            <td data-label="使うbat"><code>run_webui_voice_design.bat</code></td>
+          </tr>
+          <tr>
+            <td data-label="やりたいこと"><code>gui_batch_tts.py</code> など外部ツールから音声生成したい</td>
+            <td data-label="使うbat"><code>run_irodori_wrapper_server.bat</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note"><code>gui_batch_tts.py</code> 連携で使う場合は、基本的に <code>run_irodori_wrapper_server.bat</code> を使います。WebUI系batはブラウザ操作向けであり、SBV2互換バックエンドAPIとして使うものではありません。</p>
+    </section>
+  </main>
+</body>
+</html>

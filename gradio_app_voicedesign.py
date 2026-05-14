@@ -18,6 +18,7 @@ from irodori_tts.inference_runtime import (
     list_available_runtime_precisions,
     save_wav,
 )
+from irodori_tts.model_cache import hf_hub_cache_dir, outputs_path
 
 FIXED_SECONDS = 30.0
 MAX_GRADIO_CANDIDATES = 32
@@ -107,7 +108,11 @@ def _resolve_checkpoint_path(raw_checkpoint: str) -> str:
     if suffix in {".pt", ".safetensors"}:
         return checkpoint
 
-    resolved = hf_hub_download(repo_id=checkpoint, filename="model.safetensors")
+    resolved = hf_hub_download(
+        repo_id=checkpoint,
+        filename="model.safetensors",
+        cache_dir=str(hf_hub_cache_dir()),
+    )
     print(f"[gradio-caption] checkpoint: hf://{checkpoint} -> {resolved}", flush=True)
     return str(resolved)
 
@@ -302,7 +307,7 @@ def _run_generation(
         log_fn=stdout_log,
     )
 
-    out_dir = Path("gradio_outputs_voicedesign")
+    out_dir = outputs_path("gradio_outputs_voicedesign")
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     out_paths: list[str] = []

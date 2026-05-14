@@ -151,6 +151,9 @@ def sample_euler_rf_cfg(
     dtype = model.dtype
     batch_size = text_input_ids.shape[0]
     latent_dim = model.cfg.patched_latent_dim
+    num_steps = int(num_steps)
+    if num_steps <= 0:
+        raise ValueError(f"num_steps must be > 0, got {num_steps}")
 
     rng, rng_device = _make_rng(seed=seed, device=device)
     x_t = torch.randn(
@@ -178,7 +181,12 @@ def sample_euler_rf_cfg(
         )
 
     init_scale = 0.999
-    t_schedule = torch.linspace(1.0, 0.0, num_steps + 1, device=device) * init_scale
+    t_schedule = torch.linspace(1.0, 0.0, num_steps + 1, device=device, dtype=dtype)
+    t_schedule = t_schedule * init_scale
+    t_values = [
+        init_scale * (1.0 - float(i) / float(num_steps)) for i in range(num_steps + 1)
+    ]
+    cond_embed_schedule = model.timestep_cond_embed(t_schedule[:-1], dtype=dtype)
     use_independent_cfg = cfg_guidance_mode == "independent"
     use_joint_cfg = cfg_guidance_mode == "joint"
     use_alternating_cfg = cfg_guidance_mode == "alternating"
@@ -413,20 +421,25 @@ def sample_euler_rf_cfg(
                 max_layers=speaker_kv_max_layers,
             )
     speaker_kv_active = speaker_kv_scale is not None
+    has_any_cfg = bool(enabled_cfg_names)
+    cfg_min_t_value = float(cfg_min_t)
+    cfg_max_t_value = float(cfg_max_t)
+    speaker_kv_min_t_value = None if speaker_kv_min_t is None else float(speaker_kv_min_t)
 
     for i in range(num_steps):
-        t = t_schedule[i]
-        t_next = t_schedule[i + 1]
-        tt = torch.full((batch_size,), t, device=device, dtype=dtype)
+        t = t_values[i]
+        t_next = t_values[i + 1]
+        dt = t_next - t
+        t_tensor = t_schedule[i : i + 1]
+        cond_embed = cond_embed_schedule[i : i + 1]
 
-        use_cfg = bool(enabled_cfg_names) and (cfg_min_t <= t.item() <= cfg_max_t)
+        use_cfg = has_any_cfg and (cfg_min_t_value <= t <= cfg_max_t_value)
         if use_cfg:
             if use_independent_cfg:
-                x_t_cfg = torch.cat([x_t] * cfg_batch_mult, dim=0).to(dtype)
-                tt_cfg = tt.repeat(cfg_batch_mult)
+                x_t_cfg = torch.cat([x_t] * cfg_batch_mult, dim=0)
                 v_out = model.forward_with_encoded_conditions(
                     x_t=x_t_cfg,
-                    t=tt_cfg,
+                    t=t_tensor,
                     text_state=independent_text_state,
                     text_mask=independent_text_mask,
                     speaker_state=independent_speaker_state,
@@ -434,15 +447,19 @@ def sample_euler_rf_cfg(
                     caption_state=independent_caption_state,
                     caption_mask=independent_caption_mask,
                     context_kv_cache=context_kv_cfg,
+                    cond_embed=cond_embed,
                 )
                 chunks = v_out.chunk(cfg_batch_mult, dim=0)
-                v = chunks[0]
+                v_cond = chunks[0]
+                v = v_cond.clone()
                 for name, chunk in zip(independent_names[1:], chunks[1:], strict=True):
-                    v = v + cfg_scales[name] * (chunks[0] - chunk)
+                    scale = cfg_scales[name]
+                    v.add_(v_cond, alpha=scale)
+                    v.add_(chunk, alpha=-scale)
             else:
                 v_cond = model.forward_with_encoded_conditions(
-                    x_t=x_t.to(dtype),
-                    t=tt,
+                    x_t=x_t,
+                    t=t_tensor,
                     text_state=text_state_cond,
                     text_mask=text_mask_cond,
                     speaker_state=speaker_state_cond,
@@ -450,6 +467,7 @@ def sample_euler_rf_cfg(
                     caption_state=caption_state_cond,
                     caption_mask=caption_mask_cond,
                     context_kv_cache=context_kv_cond,
+                    cond_embed=cond_embed,
                 )
                 if use_joint_cfg:
                     if len(enabled_cfg_names) > 1:
@@ -461,8 +479,8 @@ def sample_euler_rf_cfg(
                             )
                     joint_scale = cfg_scales[enabled_cfg_names[0]]
                     v_uncond_joint = model.forward_with_encoded_conditions(
-                        x_t=x_t.to(dtype),
-                        t=tt,
+                        x_t=x_t,
+                        t=t_tensor,
                         text_state=joint_uncond_bundle[0],
                         text_mask=joint_uncond_bundle[1],
                         speaker_state=joint_uncond_bundle[2],
@@ -470,14 +488,17 @@ def sample_euler_rf_cfg(
                         caption_state=joint_uncond_bundle[4],
                         caption_mask=joint_uncond_bundle[5],
                         context_kv_cache=context_kv_joint_uncond,
+                        cond_embed=cond_embed,
                     )
-                    v = v_cond + joint_scale * (v_cond - v_uncond_joint)
+                    v = v_cond.clone()
+                    v.add_(v_cond, alpha=joint_scale)
+                    v.add_(v_uncond_joint, alpha=-joint_scale)
                 elif use_alternating_cfg:
                     alt_name = enabled_cfg_names[i % len(enabled_cfg_names)]
                     alt_bundle = alternating_bundles[alt_name]
                     v_uncond_alt = model.forward_with_encoded_conditions(
-                        x_t=x_t.to(dtype),
-                        t=tt,
+                        x_t=x_t,
+                        t=t_tensor,
                         text_state=alt_bundle[0],
                         text_mask=alt_bundle[1],
                         speaker_state=alt_bundle[2],
@@ -485,14 +506,18 @@ def sample_euler_rf_cfg(
                         caption_state=alt_bundle[4],
                         caption_mask=alt_bundle[5],
                         context_kv_cache=context_kv_alternating.get(alt_name),
+                        cond_embed=cond_embed,
                     )
-                    v = v_cond + cfg_scales[alt_name] * (v_cond - v_uncond_alt)
+                    alt_scale = cfg_scales[alt_name]
+                    v = v_cond.clone()
+                    v.add_(v_cond, alpha=alt_scale)
+                    v.add_(v_uncond_alt, alpha=-alt_scale)
                 else:
                     raise RuntimeError(f"Unexpected cfg_guidance_mode: {cfg_guidance_mode}")
         else:
             v = model.forward_with_encoded_conditions(
-                x_t=x_t.to(dtype),
-                t=tt,
+                x_t=x_t,
+                t=t_tensor,
                 text_state=text_state_cond,
                 text_mask=text_mask_cond,
                 speaker_state=speaker_state_cond,
@@ -500,6 +525,7 @@ def sample_euler_rf_cfg(
                 caption_state=caption_state_cond,
                 caption_mask=caption_mask_cond,
                 context_kv_cache=context_kv_cond,
+                cond_embed=cond_embed,
             )
 
         if rescale_k is not None and rescale_sigma is not None:
@@ -513,9 +539,9 @@ def sample_euler_rf_cfg(
 
         if (
             speaker_kv_active
-            and speaker_kv_min_t is not None
-            and (t_next < speaker_kv_min_t)
-            and (t >= speaker_kv_min_t)
+            and speaker_kv_min_t_value is not None
+            and (t_next < speaker_kv_min_t_value)
+            and (t >= speaker_kv_min_t_value)
         ):
             inv_scale = 1.0 / float(speaker_kv_scale)
             scale_speaker_kv_cache(
@@ -537,6 +563,6 @@ def sample_euler_rf_cfg(
                 )
             speaker_kv_active = False
 
-        x_t = x_t + v * (t_next - t)
+        x_t.add_(v, alpha=dt)
 
     return x_t

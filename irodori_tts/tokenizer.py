@@ -2,6 +2,8 @@ from collections.abc import Iterable
 
 import torch
 
+from .model_cache import transformers_cache_dir
+
 
 class ByteTokenizer:
     """Simple byte-level tokenizer for text-to-speech."""
@@ -91,6 +93,7 @@ class PretrainedTextTokenizer:
             use_fast=True,
             trust_remote_code=False,
             local_files_only=local_files_only,
+            cache_dir=str(transformers_cache_dir()),
         )
         return cls(tokenizer=tokenizer, add_bos=add_bos)
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +20,7 @@ from irodori_tts.lora import (
     load_lora_adapter,
 )
 from irodori_tts.model import TextToLatentRFDiT
+from irodori_tts.model_cache import outputs_path, project_path, transformers_cache_dir
 
 CONFIG_META_KEY = "config_json"
 INFERENCE_CONFIG_KEYS = ("max_text_len", "max_caption_len", "fixed_target_latent_steps")
@@ -28,12 +28,12 @@ INFERENCE_CONFIG_KEYS = ("max_text_len", "max_caption_len", "fixed_target_latent
 
 def _default_output_path(input_path: Path) -> Path:
     if input_path.is_dir():
-        return input_path.parent / f"{input_path.name}.safetensors"
-    return input_path.with_suffix(".safetensors")
+        return outputs_path("checkpoints", f"{input_path.name}.safetensors")
+    return outputs_path("checkpoints", f"{input_path.stem}.safetensors")
 
 
 def _normalize_checkpoint_path(path: str | Path) -> Path:
-    return Path(os.path.abspath(str(Path(path).expanduser())))
+    return project_path(path)
 
 
 def _load_checkpoint(path: Path) -> dict[str, Any]:
@@ -208,6 +208,7 @@ def _initialize_embedding_from_pretrained(
         trust_remote_code=False,
         dtype=torch.float32,
         low_cpu_mem_usage=True,
+        cache_dir=str(transformers_cache_dir()),
     )
     pretrained_embedding = text_backbone.get_input_embeddings()
     if pretrained_embedding is None:
@@ -411,13 +412,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    input_path = Path(args.input_checkpoint).expanduser()
+    input_path = project_path(args.input_checkpoint)
     if not input_path.exists():
         raise FileNotFoundError(f"Input checkpoint not found: {input_path}")
 
-    output_path = (
-        Path(args.output).expanduser() if args.output else _default_output_path(input_path)
-    )
+    output_path = project_path(args.output) if args.output else _default_output_path(input_path)
     if output_path.suffix.lower() != ".safetensors":
         raise ValueError(f"Output must use .safetensors suffix: {output_path}")
 
