@@ -69,6 +69,11 @@ class GainTests(unittest.TestCase):
 
 
 class EmbeddingTests(unittest.TestCase):
+    def test_empty_or_invalid_embeddings_are_not_reported_as_similarity(self):
+        for values in (np.empty((0, 3)), np.array([[np.nan, 0, 1]]), np.zeros((1, 3))):
+            with self.assertRaises(ValueError):
+                em.centroid(values)
+
     def test_centroid_weights_windows_equally(self):
         windows = np.array([[10.0, 0.0], [0.0, 0.1]])  # very different norms
         c = em.centroid(windows)
@@ -78,6 +83,17 @@ class EmbeddingTests(unittest.TestCase):
 
 
 class F0Tests(unittest.TestCase):
+    def test_truncated_or_invalid_output_still_uses_entire_source(self):
+        src = np.full(20, 220.0)
+        r = em.f0_coverage(src, np.full(10, 220.0))
+        self.assertEqual(r["source_voiced_frames"], 20)
+        self.assertEqual(r["missing_output_tail_frames"], 10)
+        self.assertEqual(r["within_50c_of_source_voiced"], 0.5)
+        self.assertEqual(r["common_within_50c"], 1.0)
+        invalid = em.f0_coverage(src, np.array([0.0, -220.0, np.inf, np.nan] + [220.0] * 16))
+        self.assertEqual(invalid["within_50c_of_source_voiced"], 0.8)
+        self.assertEqual(em.f0_coverage(src, np.full(30, 220.0))["within_50c_of_source_voiced"], 1.0)
+
     def test_missing_output_counts_as_failure(self):
         src = np.array([200.0] * 8 + [np.nan] * 2 + [200.0] * 10)
         out = src.copy()
@@ -124,6 +140,26 @@ class EnvelopeAndTextTests(unittest.TestCase):
 
 
 class SeededWrapperTests(unittest.TestCase):
+    def test_existing_listening_pack_preserves_user_ratings(self):
+        import importlib.util
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        script = Path(__file__).resolve().parents[1] / "scripts" / "singing_reference_comparison.py"
+        spec = importlib.util.spec_from_file_location("comparison_test", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pack = root / "listening_pack"
+            pack.mkdir()
+            ratings = pack / "my_ratings.txt"
+            ratings.write_text("X01: 5", encoding="utf-8")
+            with self.assertRaises(FileExistsError):
+                module.stage_pack(root, SimpleNamespace())
+            self.assertEqual(ratings.read_text(encoding="utf-8"), "X01: 5")
+
     def test_split_argv(self):
         own, rest = seeded_seedvc.split_argv(["--seed", "1", "--", "--source", "x.wav"])
         self.assertEqual(own, ["--seed", "1"])

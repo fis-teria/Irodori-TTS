@@ -573,7 +573,9 @@ def stage_eval(root: Path, args: argparse.Namespace) -> None:
 def stage_pack(root: Path, args: argparse.Namespace) -> None:
     pack, key_dir = root / "listening_pack", root / "listening_key"
     if pack.exists():
-        shutil.rmtree(pack)
+        raise FileExistsError(
+            f"Listening pack already exists: {pack}. Keep its audio and ratings; use a fresh experiment root."
+        )
     pack.mkdir()
     key_dir.mkdir(exist_ok=True)
     blind = {f"{c}_seed{s}": root / "vc" / f"{c}_seed{s}" / "converted.wav" for c in MAIN_CONDITIONS for s in args.seeds}
@@ -655,6 +657,7 @@ def stage_summary(root: Path, args: argparse.Namespace) -> None:
         summary[group] = row
     impostors = [identity[n]["cos_heldout_target"] for n, i in data["items"].items() if i["kind"] == "impostor"]
     calibration = {"impostor_count": len(impostors),
+                   "label_caveat": "same_speaker/impostor are folder-label groups; human speaker identities were not independently verified",
                    "impostor_cos_heldout_target": {"min": min(impostors), "mean": sum(impostors) / len(impostors),
                                                    "max": max(impostors)} if impostors else None,
                    "same_speaker_cos_heldout_target": [identity[n]["cos_heldout_target"]
@@ -664,6 +667,8 @@ def stage_summary(root: Path, args: argparse.Namespace) -> None:
     repeat = [r for r in read_json(root / "vc.json")["runs"] if r["role"] == "repeatability"]
     write_json(root / "summary.json", clean({"conditions": summary, "identity_calibration": calibration,
                                              "asr_tts_speech_vs_input_text": asr.get("tts_speech_vs_input_text"),
+                                             "human_evaluation": read_json(root / "human_feedback.json")
+                                             if (root / "human_feedback.json").exists() else {"status": "not_collected"},
                                              "repeatability_runs": [r["name"] for r in repeat]}))
     log(f"[summary] {len(summary)} groups")
 

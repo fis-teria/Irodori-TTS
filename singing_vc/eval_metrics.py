@@ -117,6 +117,11 @@ def unit(vectors: np.ndarray) -> np.ndarray:
 
 def centroid(embeddings: np.ndarray) -> np.ndarray:
     """Mean of L2-normalised window embeddings, renormalised to unit length."""
+    embeddings = np.asarray(embeddings, dtype=np.float64)
+    if embeddings.ndim != 2 or not len(embeddings) or not np.isfinite(embeddings).all():
+        raise ValueError("A centroid needs at least one finite embedding window")
+    if np.any(np.linalg.norm(embeddings, axis=1) <= 1e-12):
+        raise ValueError("Embedding windows must have nonzero norm")
     return unit(unit(embeddings).mean(axis=0))
 
 
@@ -131,13 +136,19 @@ def f0_coverage(src: np.ndarray, out: np.ndarray, semitone_shift: float = 0.0) -
     conditions with different output voicing are compared on the same base.
     The common-voiced subset is reported separately and labelled as such.
     """
-    frames = min(len(src), len(out))
-    src, out = np.asarray(src[:frames], float), np.asarray(out[:frames], float)
-    src_voiced = ~np.isnan(src)
-    both = src_voiced & ~np.isnan(out)
+    src, original_out = np.asarray(src, float), np.asarray(out, float)
+    frames = len(src)
+    out = np.full(frames, np.nan)
+    copied = min(frames, len(original_out))
+    out[:copied] = original_out[:copied]
+    src_voiced = np.isfinite(src) & (src > 0)
+    out_voiced = np.isfinite(out) & (out > 0)
+    both = src_voiced & out_voiced
     n_src = int(src_voiced.sum())
     result = {"frames": frames, "source_voiced_frames": n_src, "common_voiced_frames": int(both.sum()),
-              "output_voiced_frames": int((~np.isnan(out)).sum())}
+              "output_voiced_frames": int(out_voiced.sum()),
+              "output_original_frames": len(original_out),
+              "missing_output_tail_frames": max(0, frames - len(original_out))}
     if n_src == 0:
         return result
     cents = np.full(frames, np.nan)
