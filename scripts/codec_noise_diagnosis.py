@@ -110,7 +110,7 @@ def git_head() -> str | None:
 
 
 class Runner:
-    def __init__(self, device: str):
+    def __init__(self, device: str, codec_repo: str = CODEC_REPO):
         from irodori_tts.local_env import configure_project_environment
 
         configure_project_environment()
@@ -120,7 +120,7 @@ class Runner:
         from irodori_tts.codec import DACVAECodec
 
         self.torch, self.torchaudio = torch, torchaudio
-        self.codec = DACVAECodec.load(repo_id=CODEC_REPO, device=device, normalize_db=None)
+        self.codec = DACVAECodec.load(repo_id=codec_repo, device=device, normalize_db=None)
         self.rate = self.codec.sample_rate
 
     def to_codec_rate(self, audio: np.ndarray, rate: int) -> np.ndarray:

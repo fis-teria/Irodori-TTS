@@ -5,6 +5,8 @@ Seed-VC v1 の **F0 条件付き 44.1 kHz 歌唱モデル** の参照として�
 Windows ローカル向けのプロトタイプです。Seed-VC v2 の話し声モデルは使いません。
 
 検証結果は [SINGING_VALIDATION_JA.md](SINGING_VALIDATION_JA.md) を参照してください。
+Irodori のコーデック単体で歌を往復させた確認は [CODEC_NOISE_DIAGNOSIS_JA.md](CODEC_NOISE_DIAGNOSIS_JA.md)
+と [CODEC_MULTI_SEGMENT_VALIDATION_JA.md](CODEC_MULTI_SEGMENT_VALIDATION_JA.md)（同じ曲の別区間）にあります。
 
 ## 構成
 
