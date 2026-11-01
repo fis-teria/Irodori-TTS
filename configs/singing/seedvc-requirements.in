@@ -1,0 +1,18 @@
+# Seed-VC v1 singing inference only (inference.py, f0-conditioned 44.1 kHz model).
+# Versions follow upstream requirements.txt at 51383efd; training, GUI, ASR/eval
+# packages (gradio, funasr, modelscope, resemblyzer, jiwer, sounddevice) are omitted.
+# CUDA 12.1 wheels support the RTX 40 series; this venv stays separate from Irodori's.
+--index-url https://pypi.org/simple
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.4.0+cu121
+torchaudio==2.4.0+cu121
+numpy==1.26.4
+scipy==1.13.1
+librosa==0.10.2
+huggingface-hub==0.28.1
+munch==4.0.0
+einops==0.8.0
+transformers==4.46.3
+soundfile==0.12.1
+pyyaml
+descript-audio-codec==1.0.0  # modules/length_regulator imports dac.nn.quantize

@@ -222,3 +222,6 @@ data/
 model_data/
 .cache/
 .tools/
+
+# Singing prototype (Seed-VC sources, venv, checkpoints, outputs)
+.singing/

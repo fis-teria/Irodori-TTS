@@ -1,0 +1,13 @@
+{
+  "_comment": "Defaults for run_singing --options-json. Command-line flags override these values. Paths may be absolute.",
+  "tts_text": "こんにちは。今日は少しだけ、新しい歌の練習をしてみようと思います。よろしくお願いします。",
+  "tts_caption": "落ち着いた、近い距離感の女性話者",
+  "tts_hf_checkpoint": "Aratako/Irodori-TTS-v4.1-Small",
+  "tts_seed": 0,
+  "diffusion_steps": 30,
+  "inference_cfg_rate": 0.7,
+  "f0_condition": true,
+  "auto_f0_adjust": false,
+  "semitone_shift": 0,
+  "length_adjust": 1.0
+}

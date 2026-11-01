@@ -130,3 +130,7 @@ V4.1 Small・RTX 4080・BF16・batch32/grad accum1・参照なし83件の各2,04
 元のコードは [Aratako/Irodori-TTS](https://github.com/Aratako/Irodori-TTS) です。コードのMITライセンスと著作権表示は同梱の `LICENSE` に保存しています。このZIPに外部モデル重みや外部ツールの実行ファイルは含まれません。取得するモデル・ツールにはそれぞれの配布元の利用条件が適用されるため、各配布元の説明も確認してください。
 
 各ファイルのSHA256は `RELEASE_MANIFEST.json`、ZIP全体のSHA256はZIPと一緒に配布する `.zip.sha256` に記載されています。
+
+## 歌唱変換プロトタイプ (Seed-VC)
+
+Irodori で作った参照音声を使って歌声を変換するプロトタイプは `setup_singing.bat` / `run_singing.ps1` / `run_singing_webui.bat` で使えます。詳しくは [docs/SINGING_PROTOTYPE_JA.md](docs/SINGING_PROTOTYPE_JA.md) を参照してください。
