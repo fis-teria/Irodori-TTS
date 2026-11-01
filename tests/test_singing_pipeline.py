@@ -1,5 +1,6 @@
 """Argument, command and failure-path checks for the singing prototype (no models loaded)."""
 
+import io
 import json
 import math
 import os
@@ -305,6 +306,18 @@ class SingingPipelineTests(unittest.TestCase):
         defaults.write_text(json.dumps({"tts_text": "a", "offline": True, "f0_report": True}), encoding="utf-8")
         options, _ = cli.parse_options(base + ["--online", "--no-f0-report"])
         self.assertEqual((options.offline, options.f0_report), (False, False))
+
+    def test_cli_output_survives_cp932_stream(self):
+        streams = [io.TextIOWrapper(io.BytesIO(), encoding="cp932") for _ in range(2)]
+        progress = "seedvc 50%|█████▎    | 15/30"  # tqdm block characters are not in cp932
+        options = self.options(reference_wav=str(self.wavs["reference"]))
+        with mock.patch.object(sys, "stdout", streams[0]), mock.patch.object(sys, "stderr", streams[1]), \
+                mock.patch.object(cli, "run_pipeline", side_effect=lambda _o: print(progress) or {
+                    "run_dir": str(self.tmp), "status": "succeeded"}), \
+                mock.patch.object(cli, "parse_options", return_value=(options, False)):
+            self.assertEqual(cli.main([]), 0)
+            sys.stdout.flush()
+        self.assertIn("seedvc 50%|", streams[0].buffer.getvalue().decode("cp932"))
 
     def test_f0_compare_matches_requested_shift(self):
         src = np.concatenate([np.linspace(220.0, 440.0, 50), [np.nan] * 5])

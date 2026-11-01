@@ -106,7 +106,17 @@ def parse_options(argv: list[str] | None = None) -> tuple[SingingOptions, bool]:
     return SingingOptions(**values), bool(args.dry_run)
 
 
+def use_safe_console() -> None:
+    """Replace, never crash on, characters the output code page lacks (e.g. tqdm bars into a cp932 pipe)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):  # not a TextIOWrapper, or already detached
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    use_safe_console()
     options, dry_run = parse_options(argv)
     if dry_run:
         problems = validate(options)
