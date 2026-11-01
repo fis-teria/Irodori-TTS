@@ -7,9 +7,9 @@ does not show that a TTS would learn to sing. Run inside the Irodori ``.venv``.
   .venv\\Scripts\\python.exe scripts\\dacvae_roundtrip.py --input in.wav --output out.wav --json out.json
 
 ``--input-level model-card`` (opt-in) encodes at the model card's -16 LUFS and divides the
-same gain back out after decoding, so the output stays at the input level. On quiet inputs it
-lowers the fixed decoder floor in pauses; it does not change the sung-harmonic losses
-(docs/CODEC_NOISE_DIAGNOSIS_JA.md). The default stays the raw level for comparability.
+same gain back out after decoding, so playback is not simply made quieter. On the tested clip,
+the user judged this candidate close to the original singing; spectral differences remain.
+See docs/CODEC_NOISE_DIAGNOSIS_JA.md. The default stays raw for baseline comparability.
 """
 
 from __future__ import annotations
@@ -74,8 +74,11 @@ def main(argv: list[str] | None = None) -> int:
             if rate != codec.sample_rate:
                 waveform = torchaudio.functional.resample(waveform, rate, codec.sample_rate)
             rate = codec.sample_rate
-            normalized = codec._normalize_loudness(waveform[0], rate, -16.0)  # pure scalar gain
-            gain_db = codec_diag.scalar_gain_db(waveform[0].numpy(), normalized.numpy())
+            if torch.count_nonzero(waveform) == 0:
+                normalized = waveform[0]  # digital silence has no meaningful loudness gain
+            else:
+                normalized = codec._normalize_loudness(waveform[0], rate, -16.0)  # pure scalar gain
+                gain_db = codec_diag.scalar_gain_db(waveform[0].numpy(), normalized.numpy())
             waveform = normalized[None]
         latent = codec.encode_waveform(waveform, rate, normalize_db=None, ensure_max=True)
         decoded = codec.decode_latent(latent)[0, 0].float().cpu().numpy()

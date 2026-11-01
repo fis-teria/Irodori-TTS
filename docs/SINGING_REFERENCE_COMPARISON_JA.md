@@ -1,5 +1,7 @@
 # 歌唱変換の参照音声比較（Irodori 生成参照 vs 実録音参照）評価レポート
 
+追記（2026-11-01、コーデック切り分け後）: −16 LUFSで符号化して逆ゲインを戻す候補を、利用者は「元の歌唱とほぼ遜色ない」と評価しました。[追加検証](CODEC_NOISE_DIAGNOSIS_JA.md)を最新のコーデック判断として参照してください。以下は旧raw経路と当時の判断を残した記録です。Seed-VC出力の再評価や本体の歌唱学習は今回行っていません。
+
 対象: Irodori-TTS v4.1-Small + Seed-VC v1 歌唱モデルによる歌声変換。実施日 2026-11-01、RTX 4080 1 台。
 結果の数値・ハッシュ・コマンドは実験フォルダ `outputs/singing/reference_comparison_<timestamp>/`
 （git 管理外）の `summary.json` / `eval.json` / `vc.json` / `refs.json` / `setup.json` / `provenance.json` にあります。

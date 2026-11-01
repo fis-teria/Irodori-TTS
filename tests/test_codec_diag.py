@@ -32,6 +32,18 @@ def load_script(name):
 
 
 class GainTests(unittest.TestCase):
+    def test_zero_and_tiny_signals_do_not_corrupt_gain_calibration(self):
+        self.assertEqual(cd.scalar_gain_db(np.zeros(20), np.zeros(20)), 0.0)
+        tiny = np.array([1e-12, -2e-12, 3e-12])
+        self.assertAlmostEqual(cd.scalar_gain_db(tiny, tiny * 4), 20 * math.log10(4), places=9)
+        with self.assertRaises(ValueError):
+            cd.scalar_gain_db(np.zeros(20), np.ones(20))
+
+    def test_restoration_rejects_nonfinite_gain(self):
+        for gain in (math.inf, -math.inf, math.nan):
+            with self.assertRaises(ValueError):
+                cd.restore_gain(np.ones(20), gain)
+
     def test_boost_limited_by_peak_cap(self):
         audio = np.array([0.0, 0.2, -0.4])
         plan = cd.peak_safe_gain_db(audio, 12.0, peak_cap=0.95)
@@ -68,6 +80,24 @@ class AlignmentTests(unittest.TestCase):
 
 
 class CompareTests(unittest.TestCase):
+    def test_parseval_band_power_and_dc_level_have_physical_units(self):
+        t = np.arange(SR) / SR
+        power = cd.power_spectrogram(0.1 * np.sin(2 * np.pi * 220 * t))
+        interior = np.ones(len(power), dtype=bool)
+        interior[:8] = interior[-8:] = False
+        levels = cd.band_levels_db(power, interior, SR)
+        self.assertAlmostEqual(levels["0-300"], 10 * math.log10(0.1 ** 2 / 2), delta=0.02)
+        dc_power = cd.power_spectrogram(np.full(SR, 0.1))
+        self.assertAlmostEqual(float(np.median(cd.frame_levels_db(dc_power)[8:-8])), -20.0, places=6)
+
+    def test_dc_offset_is_separate_from_ac_noise(self):
+        constant = cd.dc_ac_stats(np.full(1000, 1e-4))
+        self.assertAlmostEqual(constant["total_rms_dbfs"], -80.0, places=6)
+        self.assertAlmostEqual(constant["dc_energy_fraction"], 1.0, places=6)
+        zero = cd.dc_ac_stats(np.zeros(1000))
+        self.assertIsNone(zero["total_rms_dbfs"])
+        self.assertIsNone(zero["centered_ac_rms_dbfs"])
+
     def setUp(self):
         gap = np.zeros(SR // 2)
         self.ref = np.concatenate([gap, harmonic(1.0), gap, harmonic(1.0, f0=330.0), gap])
@@ -109,7 +139,10 @@ class CompareTests(unittest.TestCase):
         extra = self.ref + 1e-3 * np.sin(2 * np.pi * 23000 * t)
         result = cd.compare(self.ref, extra, SR)
         bands = result["active"]
-        self.assertGreater(bands["decoded_bands_db"]["22050-24000"], bands["reference_bands_db"]["22050-24000"] + 40)
+        measured = bands["decoded_bands_db"]["22050-24000"]
+        self.assertAlmostEqual(measured, 10 * math.log10(1e-3 ** 2 / 2), delta=0.05)
+        # The bookkeeping floor is -100 dBFS, limiting the representable difference.
+        self.assertGreater(measured, bands["reference_bands_db"]["22050-24000"] + 30)
 
 
 class PathSafetyTests(unittest.TestCase):

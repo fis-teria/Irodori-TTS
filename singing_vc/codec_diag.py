@@ -38,12 +38,36 @@ def scalar_gain_db(reference: np.ndarray, scaled: np.ndarray) -> float:
     """dB of the least-squares scalar mapping ``reference`` onto ``scaled`` (exact for a pure gain)."""
     ref = np.asarray(reference, dtype=np.float64)
     out = np.asarray(scaled, dtype=np.float64)[: len(ref)]
-    ratio = float(np.dot(ref[: len(out)], out) / max(np.dot(ref[: len(out)], ref[: len(out)]), EPS))
+    ref = ref[:len(out)]
+    if not ref.size or not np.isfinite(ref).all() or not np.isfinite(out).all():
+        raise ValueError("Gain calibration needs nonempty finite samples")
+    energy = float(np.dot(ref, ref))
+    if energy == 0:
+        if np.any(out != 0):
+            raise ValueError("A nonzero output cannot be a scalar gain of digital silence")
+        return 0.0
+    ratio = float(np.dot(ref, out) / energy)
     return 20.0 * math.log10(ratio) if ratio > 0 else -math.inf
 
 
 def restore_gain(audio: np.ndarray, gain_db: float) -> np.ndarray:
+    if not math.isfinite(gain_db):
+        raise ValueError("Restored gain must be finite")
     return (np.asarray(audio, dtype=np.float64) * 10 ** (-gain_db / 20)).astype(np.float32)
+
+
+def dc_ac_stats(audio: np.ndarray) -> dict:
+    """Separate a constant offset from centred AC energy; neither is a perceptual noise score."""
+    x = np.asarray(audio, dtype=np.float64)
+    if not x.size or not np.isfinite(x).all():
+        raise ValueError("DC/AC analysis needs nonempty finite samples")
+    dc = float(x.mean())
+    total = float(np.mean(x * x))
+    ac = float(np.mean((x - dc) ** 2))
+    return {"samples": int(x.size), "dc_mean": dc,
+            "total_rms_dbfs": 10 * math.log10(total) if total > 0 else None,
+            "centered_ac_rms_dbfs": 10 * math.log10(ac) if ac > 0 else None,
+            "dc_energy_fraction": dc * dc / total if total > 0 else 0.0}
 
 
 def best_lag(reference: np.ndarray, test: np.ndarray, max_lag: int) -> int:
@@ -77,7 +101,10 @@ def power_spectrogram(audio: np.ndarray) -> np.ndarray:
 
 
 def frame_levels_db(power: np.ndarray) -> np.ndarray:
-    return 10.0 * np.log10(np.maximum(power.sum(axis=1) * 2 / N_FFT, EPS))
+    weights = np.full(power.shape[1], 2.0 / N_FFT)
+    weights[0] *= 0.5
+    weights[-1] *= 0.5  # even N_FFT: DC and Nyquist occur only once
+    return 10.0 * np.log10(np.maximum((power * weights).sum(axis=1), EPS))
 
 
 def frame_masks(ref_levels_db: np.ndarray) -> dict[str, np.ndarray]:
@@ -98,7 +125,11 @@ def band_levels_db(power: np.ndarray, mask: np.ndarray, sample_rate: int) -> dic
         if not mask.any() or not cols.any():
             out[f"{lo}-{hi}"] = None
             continue
-        out[f"{lo}-{hi}"] = 10.0 * math.log10(max(float(power[mask][:, cols].sum(axis=1).mean()), EPS))
+        weights = np.full(power.shape[1], 2.0 / N_FFT)
+        weights[0] *= 0.5
+        weights[-1] *= 0.5
+        band_power = (power[mask][:, cols] * weights[cols]).sum(axis=1).mean()
+        out[f"{lo}-{hi}"] = 10.0 * math.log10(max(float(band_power), EPS))
     return out
 
 
