@@ -65,6 +65,7 @@ from irodori_tts.optim import (
     current_pretrained_text_encoder_lr,
 )
 from irodori_tts.progress import TrainProgress
+from irodori_tts.text_cache import make_text_feature_keys
 from irodori_tts.rf import (
     rf_interpolate,
     rf_velocity_target,
@@ -902,7 +903,8 @@ def _load_model_state_from_checkpoint(
 
         checkpoint_model_cfg = None
         text_encoder_config = None
-        with safe_open(str(path), framework="pt", device="cpu") as handle:
+        backend = "pread" if sys.platform == "win32" else "mmap"
+        with safe_open(str(path), framework="pt", device="cpu", backend=backend) as handle:
             metadata = dict(handle.metadata() or {})
         from irodori_tts.quantization import parse_quantization_metadata
 
@@ -927,7 +929,7 @@ def _load_model_state_from_checkpoint(
             if isinstance(parsed, dict):
                 text_encoder_config = parsed
         return (
-            load_safetensors_file(str(path), device="cpu"),
+            load_safetensors_file(str(path), device="cpu", backend=backend),
             checkpoint_model_cfg,
             None,
             text_encoder_config,
@@ -1542,6 +1544,58 @@ def _lora_field_cli_explicit(field: str, args: argparse.Namespace, raw_argv: lis
     return cli_provided(raw_argv, flag)
 
 
+def _resolve_training_condition_assets(
+    model_cfg: ModelConfig,
+    train_cfg: TrainConfig,
+    *,
+    init_checkpoint: str | Path | None = None,
+    resume_checkpoint: str | Path | None = None,
+    resume_base_init: dict | None = None,
+    resume_text_encoder_config: dict | None = None,
+) -> tuple[ModelConfig, dict | None, bool]:
+    """Use published checkpoint assets for RF/LoRA as well as distillation.
+
+    Keep model_cfg unchanged: checkpoint compatibility must still compare the
+    original model/revision identifiers, not local tokenizer filesystem paths.
+    """
+    meanflow = train_cfg.train_mode == "meanflow_distill"
+    if not meanflow and not model_cfg.use_pretrained_text_encoder:
+        return model_cfg, None, False
+    checkpoint = None
+    if meanflow:
+        checkpoint = train_cfg.teacher_checkpoint
+    elif init_checkpoint is not None:
+        checkpoint = init_checkpoint
+    elif isinstance(resume_base_init, dict) and resume_base_init.get("mode") == "checkpoint":
+        checkpoint = resume_base_init.get("checkpoint_path")
+    if checkpoint is None:
+        checkpoint = resume_checkpoint
+    if checkpoint is None:
+        return model_cfg, None, False
+
+    checkpoint_path = _normalize_checkpoint_path(checkpoint)
+    bundled = _resolve_bundled_tokenizer_source(checkpoint_path)
+    embedded = None
+    if not meanflow and init_checkpoint is None:
+        embedded = resume_text_encoder_config
+    if embedded is None and (meanflow or bundled is not None or checkpoint_path.suffix.lower() == ".safetensors"):
+        embedded = _load_embedded_text_encoder_config(checkpoint_path)
+    if bundled is None:
+        return model_cfg, embedded, False
+    if embedded is None:
+        raise ValueError(
+            "Bundled tokenizer was found, but the condition checkpoint has no "
+            f"embedded text encoder config: {checkpoint_path}"
+        )
+    asset_cfg = replace(
+        model_cfg,
+        text_tokenizer_repo=str(bundled),
+        caption_tokenizer_repo=str(bundled) if model_cfg.use_caption_condition else None,
+        text_encoder_revision=None,
+    )
+    return asset_cfg, embedded, True
+
+
 def _restore_resume_lora_config(
     train_cfg: TrainConfig,
     *,
@@ -1904,11 +1958,58 @@ def reduce_sum(value: torch.Tensor, distributed: bool) -> torch.Tensor:
     return reduced
 
 
-def _move_batch_to_device(batch: dict, device: torch.device) -> dict:
-    return {
+def _move_batch_to_device(
+    batch: dict, device: torch.device, *, cache_text_features: bool = False,
+) -> dict:
+    no_reference_audio = _batch_has_no_reference_audio(batch)
+    text_cache_keys = _batch_text_cache_keys(batch, enabled=cache_text_features)
+    moved = {
         key: value.to(device, non_blocking=True) if isinstance(value, torch.Tensor) else value
         for key, value in batch.items()
     }
+    moved["_no_reference_audio"] = no_reference_audio
+    if text_cache_keys is not None:
+        moved["_text_cache_keys"] = text_cache_keys
+    return moved
+
+
+def _batch_has_no_reference_audio(batch: dict) -> bool:
+    if "_no_reference_audio" in batch:
+        return bool(batch["_no_reference_audio"])
+    labels = batch.get("has_speaker")
+    # Never introduce a CUDA scalar read/synchronization for this decision.
+    return isinstance(labels, torch.Tensor) and labels.device.type == "cpu" and not bool(labels.any())
+
+
+def _skip_absent_speaker_encoder(batch: dict, cfg: TrainConfig) -> bool:
+    return (
+        cfg.skip_absent_speaker_encoder
+        and not cfg.speaker_inversion_enabled
+        and _batch_has_no_reference_audio(batch)
+    )
+
+
+def _batch_text_cache_keys(batch: dict, *, enabled: bool):
+    if not enabled:
+        return None
+    if "_text_cache_keys" in batch:
+        return batch["_text_cache_keys"]
+    ids, mask = batch["text_ids"], batch["text_mask"]
+    if ids.device.type != "cpu" or mask.device.type != "cpu":
+        return None  # Never read CUDA tensors back just to form a cache key.
+    return make_text_feature_keys(ids, mask)
+
+
+def _training_text_cache_enabled(model_cfg: ModelConfig, train_cfg: TrainConfig) -> bool:
+    return (
+        train_cfg.cache_frozen_text_features
+        and train_cfg.text_feature_cache_max_mb > 0
+        and not train_cfg.compile_model
+        and train_cfg.train_mode != "meanflow_distill"
+        # Without duration, training can change the text mask on CUDA before
+        # encoding; its CPU key would no longer describe that mask.
+        and (model_cfg.use_duration_predictor or train_cfg.text_condition_dropout == 0)
+    )
 
 
 def _record_batch_stream(batch: dict, stream: torch.cuda.Stream) -> None:
@@ -1917,7 +2018,9 @@ def _record_batch_stream(batch: dict, stream: torch.cuda.Stream) -> None:
             value.record_stream(stream)
 
 
-def cuda_prefetch_batches(loader, *, device: torch.device, enabled: bool):
+def cuda_prefetch_batches(
+    loader, *, device: torch.device, enabled: bool, cache_text_features: bool = False,
+):
     if not enabled or device.type != "cuda":
         yield from loader
         return
@@ -1934,7 +2037,7 @@ def cuda_prefetch_batches(loader, *, device: torch.device, enabled: bool):
             next_batch = None
             return
         with torch.cuda.stream(stream):
-            next_batch = _move_batch_to_device(cpu_batch, device)
+            next_batch = _move_batch_to_device(cpu_batch, device, cache_text_features=cache_text_features)
 
     preload()
     while next_batch is not None:
@@ -2393,6 +2496,9 @@ def run_validation(
 
     with torch.no_grad():
         for batch in loader:
+            text_cache_keys = _batch_text_cache_keys(
+                batch, enabled=_training_text_cache_enabled(model_cfg, train_cfg),
+            )
             text_ids = batch["text_ids"].to(device, non_blocking=True)
             text_mask = batch["text_mask"].to(device, non_blocking=True)
             caption_ids = None
@@ -2478,6 +2584,8 @@ def run_validation(
                         ref_latent=ref_latent,
                         ref_mask=ref_mask,
                         caption_input_ids=caption_ids,
+                        no_reference_audio=_skip_absent_speaker_encoder(batch, train_cfg),
+                        text_cache_keys=text_cache_keys,
                         caption_mask=caption_mask,
                         latent_mask=None,
                         duration_features=duration_features,
@@ -2495,6 +2603,8 @@ def run_validation(
                         ref_latent=ref_latent,
                         ref_mask=ref_mask,
                         caption_input_ids=caption_ids,
+                        no_reference_audio=_skip_absent_speaker_encoder(batch, train_cfg),
+                        text_cache_keys=text_cache_keys,
                         caption_mask=caption_mask,
                         latent_mask=x_mask,
                         speaker_condition_dropout=speaker_condition_dropout,
@@ -2514,6 +2624,8 @@ def run_validation(
                         ref_latent=ref_latent,
                         ref_mask=ref_mask,
                         caption_input_ids=caption_ids,
+                        no_reference_audio=_skip_absent_speaker_encoder(batch, train_cfg),
+                        text_cache_keys=text_cache_keys,
                         caption_mask=caption_mask,
                         latent_mask=x_mask,
                     )
@@ -2642,6 +2754,18 @@ def main() -> None:
         help="Enable activation checkpointing on diffusion blocks to reduce memory.",
     )
     parser.add_argument(
+        "--skip-absent-speaker-encoder", action=argparse.BooleanOptionalAction, default=None,
+        help="Skip a frozen speaker encoder on batches with no reference audio.",
+    )
+    parser.add_argument(
+        "--cache-frozen-text-features", action=argparse.BooleanOptionalAction, default=None,
+        help="Reuse frozen, deterministic text-backbone features during training.",
+    )
+    parser.add_argument(
+        "--text-feature-cache-max-mb", type=int, default=None,
+        help="Maximum process-local text feature cache payload in MiB (0 disables).",
+    )
+    parser.add_argument(
         "--train-mode",
         choices=sorted(TRAIN_MODES),
         default=None,
@@ -2685,6 +2809,12 @@ def main() -> None:
         type=int,
         default=None,
         help="Maximum token length for caption conditioning (defaults to max_text_len).",
+    )
+    parser.add_argument(
+        "--dynamic-text-padding",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Trim fully masked trailing text padding per batch for pretrained text encoders (V4).",
     )
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -3018,6 +3148,12 @@ def main() -> None:
         train_cfg = replace(train_cfg, compile_model=args.compile_model)
     if args.gradient_checkpointing is not None:
         train_cfg = replace(train_cfg, gradient_checkpointing=args.gradient_checkpointing)
+    if args.cache_frozen_text_features is not None:
+        train_cfg = replace(train_cfg, cache_frozen_text_features=args.cache_frozen_text_features)
+    if args.text_feature_cache_max_mb is not None:
+        train_cfg = replace(train_cfg, text_feature_cache_max_mb=args.text_feature_cache_max_mb)
+    if args.skip_absent_speaker_encoder is not None:
+        train_cfg = replace(train_cfg, skip_absent_speaker_encoder=args.skip_absent_speaker_encoder)
     if cli_provided(raw_argv, "--train-mode"):
         train_cfg = replace(train_cfg, train_mode=args.train_mode)
     if cli_provided(raw_argv, "--batch-size"):
@@ -3029,6 +3165,8 @@ def main() -> None:
         )
     if cli_provided(raw_argv, "--max-text-len"):
         train_cfg = replace(train_cfg, max_text_len=args.max_text_len)
+    if args.dynamic_text_padding is not None:
+        train_cfg = replace(train_cfg, dynamic_text_padding=args.dynamic_text_padding)
     if cli_provided(raw_argv, "--max-caption-len"):
         train_cfg = replace(train_cfg, max_caption_len=args.max_caption_len)
     if cli_provided(raw_argv, "--num-workers"):
@@ -3660,28 +3798,16 @@ def main() -> None:
             f"W&B enabled: project={train_cfg.wandb_project} mode={train_cfg.wandb_mode} run={wandb_run.name if wandb_run is not None else train_cfg.wandb_run_name}"
         )
 
-    condition_asset_cfg = model_cfg
-    embedded_condition_config = None
-    condition_assets_are_local = False
-    if train_cfg.train_mode == "meanflow_distill":
-        condition_checkpoint = _normalize_checkpoint_path(train_cfg.teacher_checkpoint)
-        bundled_tokenizer = _resolve_bundled_tokenizer_source(condition_checkpoint)
-        embedded_condition_config = _load_embedded_text_encoder_config(condition_checkpoint)
-        if bundled_tokenizer is not None:
-            condition_asset_cfg = replace(
-                model_cfg,
-                text_tokenizer_repo=str(bundled_tokenizer),
-                caption_tokenizer_repo=(
-                    str(bundled_tokenizer) if model_cfg.use_caption_condition else None
-                ),
-                text_encoder_revision=None,
-            )
-            condition_assets_are_local = True
-        if condition_assets_are_local and embedded_condition_config is None:
-            raise ValueError(
-                "Bundled tokenizer was found, but the MeanFlow teacher checkpoint has no "
-                "embedded text encoder config."
-            )
+    condition_asset_cfg, embedded_condition_config, condition_assets_are_local = (
+        _resolve_training_condition_assets(
+            model_cfg,
+            train_cfg,
+            init_checkpoint=args.init_checkpoint,
+            resume_checkpoint=resume_path,
+            resume_base_init=resume_base_init,
+            resume_text_encoder_config=resume_text_encoder_config,
+        )
+    )
 
     if distributed:
         local_files_only = not is_main_process
@@ -3833,6 +3959,19 @@ def main() -> None:
             ref_min_frames=ref_min_frames_cfg,
             ref_max_frames=ref_max_frames_cfg,
         )
+    if model_cfg.use_caption_condition and is_main_process:
+        for split_name, split_dataset in (("train", train_dataset), ("valid", valid_dataset)):
+            if split_dataset is None:
+                continue
+            caption_count = split_dataset.caption_labeled_count
+            print(
+                f"Caption precheck: {split_name}={caption_count}/{len(split_dataset)} labeled. "
+                + (
+                    "No captions: tokenization and caption encoding will be skipped."
+                    if caption_count == 0
+                    else "Empty-caption batches will skip tokenization and caption encoding."
+                )
+            )
     drop_last = len(train_dataset) >= train_cfg.batch_size
     if not drop_last and is_main_process:
         print(
@@ -3848,12 +3987,20 @@ def main() -> None:
         fixed_target_full_mask=train_cfg.fixed_target_full_mask,
         latent_length_bucket_size=train_cfg.latent_length_bucket_size,
         max_text_len=train_cfg.max_text_len,
+        dynamic_text_padding=(
+            train_cfg.dynamic_text_padding and model_cfg.text_encoder_type == "pretrained"
+        ),
         max_caption_len=(
             train_cfg.max_text_len
             if train_cfg.max_caption_len is None
             else train_cfg.max_caption_len
         ),
     )
+    if collator.dynamic_text_padding and is_main_process:
+        print(
+            "Dynamic text padding enabled: batch-longest right-padding; "
+            f"truncation and duration feature limit={train_cfg.max_text_len}."
+        )
     if train_cfg.fixed_target_latent_steps is not None and is_main_process:
         print(
             f"Fixed target latent length enabled: steps={train_cfg.fixed_target_latent_steps} full_mask={train_cfg.fixed_target_full_mask}"
@@ -4267,6 +4414,8 @@ def main() -> None:
                 "Speaker Inversion freeze applied: "
                 f"trainable={trainable_speaker_params:,} frozen={frozen_params:,}."
             )
+    if train_cfg.text_feature_cache_max_mb < 0:
+        raise ValueError("text_feature_cache_max_mb must be >= 0.")
     if train_cfg.gradient_checkpointing_store_every < 0:
         raise ValueError(
             "gradient_checkpointing_store_every must be >= 0, "
@@ -4278,7 +4427,11 @@ def main() -> None:
         )
         if is_main_process:
             scope = "diffusion blocks"
-            if model_cfg.use_pretrained_text_encoder:
+            if (
+                raw_model.pretrained_text_backbone is not None
+                and raw_model.pretrained_text_backbone.has_trainable_parameters()
+                and not meanflow_mode
+            ):
                 scope += " and the pretrained text encoder (when supported)"
             store_every = train_cfg.gradient_checkpointing_store_every
             store_note = (
@@ -4289,6 +4442,38 @@ def main() -> None:
             print(f"Gradient checkpointing enabled on {scope}{store_note}.")
         if meanflow_mode and raw_model.pretrained_text_backbone is not None:
             raw_model.pretrained_text_backbone.set_gradient_checkpointing(False)
+    if (
+        is_main_process
+        and raw_model.pretrained_text_backbone is not None
+        and not raw_model.pretrained_text_backbone.has_trainable_parameters()
+    ):
+        print(
+            "Frozen pretrained text/caption backbone: no_grad forward; "
+            "backbone gradient checkpointing and input gradients disabled."
+        )
+    if is_main_process and train_cfg.skip_absent_speaker_encoder:
+        print("No-reference speaker encoder skip enabled: frozen, deterministic, all-absent batches only.")
+    training_text_cache_enabled = _training_text_cache_enabled(model_cfg, train_cfg)
+    backbone = raw_model.pretrained_text_backbone
+    training_text_cache_enabled = bool(
+        training_text_cache_enabled and backbone is not None
+        and not backbone.has_trainable_parameters() and not backbone._has_stochastic_training()
+    )
+    if backbone is not None:
+        backbone.set_feature_cache(
+            train_cfg.text_feature_cache_max_mb * 2**20 if training_text_cache_enabled else 0
+        )
+    if is_main_process and train_cfg.cache_frozen_text_features:
+        if training_text_cache_enabled:
+            print(
+                "Frozen text feature cache enabled: process-local LRU, "
+                f"{train_cfg.text_feature_cache_max_mb} MiB limit; projectors uncached."
+            )
+        else:
+            print(
+                "Frozen text feature cache bypassed: requires a frozen deterministic "
+                "backbone and an unmodified text mask; unavailable with compile/MeanFlow."
+            )
     train_model = raw_model
     if train_cfg.compile_model:
         if not hasattr(torch, "compile"):
@@ -4480,12 +4665,14 @@ def main() -> None:
                 loader,
                 device=device,
                 enabled=bool(train_cfg.dataloader_cuda_prefetch),
+                cache_text_features=training_text_cache_enabled,
             )
             for raw_epoch_step, batch in enumerate(train_batches, start=1):
                 epoch_step = raw_epoch_step + current_epoch_step_offset
                 last_epoch_step = epoch_step
                 resume_loader_state_loaded = False
                 accum_micro_steps += 1
+                text_cache_keys = _batch_text_cache_keys(batch, enabled=training_text_cache_enabled)
                 text_ids = batch["text_ids"].to(device, non_blocking=True)
                 text_mask = batch["text_mask"].to(device, non_blocking=True)
                 caption_ids = None
@@ -4651,6 +4838,8 @@ def main() -> None:
                                 ref_latent=ref_latent,
                                 ref_mask=ref_mask,
                                 caption_input_ids=caption_ids,
+                                no_reference_audio=_skip_absent_speaker_encoder(batch, train_cfg),
+                                text_cache_keys=text_cache_keys,
                                 caption_mask=caption_mask,
                                 latent_mask=None,
                                 duration_features=duration_features,
@@ -4668,6 +4857,8 @@ def main() -> None:
                                 ref_latent=ref_latent,
                                 ref_mask=ref_mask,
                                 caption_input_ids=caption_ids,
+                                no_reference_audio=_skip_absent_speaker_encoder(batch, train_cfg),
+                                text_cache_keys=text_cache_keys,
                                 caption_mask=caption_mask,
                                 latent_mask=x_mask,
                                 text_condition_dropout=text_cond_drop,
@@ -4689,6 +4880,8 @@ def main() -> None:
                                 ref_latent=ref_latent,
                                 ref_mask=ref_mask,
                                 caption_input_ids=caption_ids,
+                                no_reference_audio=_skip_absent_speaker_encoder(batch, train_cfg),
+                                text_cache_keys=text_cache_keys,
                                 caption_mask=caption_mask,
                                 latent_mask=x_mask,
                                 text_condition_dropout=None,
@@ -5189,6 +5382,8 @@ def main() -> None:
             )
             if wandb_run is not None:
                 wandb_run.summary["train/final_step"] = step
+            if backbone is not None and backbone._frozen_text_cache is not None:
+                progress.write(f"Frozen text feature cache stats: {backbone._frozen_text_cache.stats()}")
             progress.write(f"Training finished at step={step}.")
     finally:
         if progress is not None:

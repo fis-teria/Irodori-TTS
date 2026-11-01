@@ -1,0 +1,325 @@
+{
+  "package": "Irodori-TTS_V4_Windows_20261026-r1",
+  "upstream_repository": "https://github.com/Aratako/Irodori-TTS",
+  "upstream_base_commit": "89f9d8fbd4d51ea019867ee1197725ede1df13c5",
+  "edition": "Windows setup with local modifications",
+  "contains_model_weights": false,
+  "files": {
+    ".gitignore": {
+      "bytes": 4648,
+      "sha256": "5c691ea546d1340b88a6b1408088b2512d0030efa5a9d6b00f9251c4bdb5c3a5"
+    },
+    ".python-version": {
+      "bytes": 5,
+      "sha256": "7a41a41354ab8049091ef1a00253ca00567f5a1d3f9aef5502c0b4b5ce9ae707"
+    },
+    "LICENSE": {
+      "bytes": 1064,
+      "sha256": "dfd47cc99fd79cced8e0cab04ed81f70b3d4f2f475a75746b341671bd3991c00"
+    },
+    "LOCAL_SETUP_WINDOWS.md": {
+      "bytes": 10541,
+      "sha256": "e0a2e582fcc08982ebd8f0131082458ed982e440d29bea03abe960b2fd78fbe1"
+    },
+    "README.md": {
+      "bytes": 27658,
+      "sha256": "804b50ab0512c5434675a739e23a2c0c4f97d98e662b797b64c6c8e5056fe781"
+    },
+    "configs/train_2.5b.yaml": {
+      "bytes": 1220,
+      "sha256": "572cb509435cc955a5020901fbefe75ddb572882486e8606f45159c2e4eb26c1"
+    },
+    "configs/train_500m.yaml": {
+      "bytes": 1223,
+      "sha256": "6d95f3d54926dccd365b73b3ab02f7ddddffedcb137c818650522a72466f9c69"
+    },
+    "configs/train_500m_v2.yaml": {
+      "bytes": 1245,
+      "sha256": "30cfc88df187ef5ef3e7cc09afc50f44802f8ea4b41bbb02f5b186ca45012765"
+    },
+    "configs/train_500m_v2_lora.yaml": {
+      "bytes": 1351,
+      "sha256": "fa8d6ff56a14ec855cdc4fe1c22b8aa3b13cbb343ea66d4c3384fa06b18f27fd"
+    },
+    "configs/train_500m_v2_voice_design.yaml": {
+      "bytes": 1566,
+      "sha256": "7f2d7f76dd76ed21415a88e016d906e78a2746518a36a594ccb8dd1b0c5ce9b0"
+    },
+    "configs/train_500m_v2_voice_design_lora.yaml": {
+      "bytes": 1616,
+      "sha256": "43a9cda3e18fae584e8674008d42d2df131076aeefeb5bb09189e346bc168b89"
+    },
+    "configs/train_500m_v3_lora.yaml": {
+      "bytes": 1778,
+      "sha256": "8f90d6729768cc970f797b4999b552f23d8ec592872dec47832210a8224f1f9f"
+    },
+    "configs/train_500m_v3_phase1_body.yaml": {
+      "bytes": 1322,
+      "sha256": "e87fb230c11bd22f2dd83a4487c023d277f99ba98b3823139b4e99a84fdfe7bd"
+    },
+    "configs/train_500m_v3_phase2_duration.yaml": {
+      "bytes": 1671,
+      "sha256": "d6b2f0367b22a229c2b92920acbbde44659fb86ad8aa67fa478b3217b72e7248"
+    },
+    "configs/train_500m_v3_speaker_inversion.yaml": {
+      "bytes": 2568,
+      "sha256": "dae7f3d33b5c36d7bee73aa18edf381eb494196f0dbffe839924430a1155c5f3"
+    },
+    "configs/train_500m_v3_voice_design_lora.yaml": {
+      "bytes": 2297,
+      "sha256": "dbaa1f218c2a2c0a4d2031db0431eeb7dfbcf99bd9390912296e22b5966aa8b2"
+    },
+    "configs/train_500m_v3_voice_design_phase1_body.yaml": {
+      "bytes": 1747,
+      "sha256": "4fcd1e8ff9b149b5f9c7dd2f1772b49fb3b9fbbf877af75369c6e8754af99ae8"
+    },
+    "configs/train_500m_v3_voice_design_phase2_duration.yaml": {
+      "bytes": 2171,
+      "sha256": "1f5b27eeeca5491171d9e2d94432ea5e6af47a18be31a22887d188dd493f5409"
+    },
+    "configs/train_v4_large.yaml": {
+      "bytes": 2532,
+      "sha256": "9c946967c469767928395b2aed2d61cd4ab69656a3e8d1acb7406afd1ec9e74b"
+    },
+    "configs/train_v4_large_duration.yaml": {
+      "bytes": 2621,
+      "sha256": "12175c4a83bce432896be7356a95ffda94d0a5ca3a091e6a0e88150d99ca937b"
+    },
+    "configs/train_v4_small.yaml": {
+      "bytes": 2870,
+      "sha256": "8a0fa6a726d1111fd931d801bb92cff9f74d846887eec9fc20f18054ee384cb8"
+    },
+    "configs/train_v4_small_duration.yaml": {
+      "bytes": 2632,
+      "sha256": "3e6b62497bf44722739f0ddf75e80ef65bd0b1bc6c4981ed4357c93472f0ad1f"
+    },
+    "configs/train_v4_small_lora.yaml": {
+      "bytes": 2779,
+      "sha256": "050d770b213ca0f9c773c8128954e1f9b7ba758a2a899347d8bb70c79e000b16"
+    },
+    "configs/train_v4_small_meanflow.yaml": {
+      "bytes": 3994,
+      "sha256": "a1ef024d625150b90cbd566b771dc765fb3ccacedda767f0a36550a13b216a8c"
+    },
+    "configs/train_v4_small_speaker_inversion.yaml": {
+      "bytes": 3174,
+      "sha256": "d2ad1e3d345b34f1b2af4f137f6492f68d541d9366f8079db943a950d9e81964"
+    },
+    "convert_checkpoint_to_safetensors.py": {
+      "bytes": 24158,
+      "sha256": "84973cb759662401b46a0165b9ecbed621cedfa5900532374f1f1561993f92e2"
+    },
+    "docs/OPTIMIZATION_NOTES.md": {
+      "bytes": 10351,
+      "sha256": "9ccd585304b2b978faa1c63773eb34889b3d27cf84aec5eb74dab629bfcebcbd"
+    },
+    "docs/meanflow.md": {
+      "bytes": 7463,
+      "sha256": "65ecb76c66d85f84b24c7fc9fcd1ed6316ba5ba42cd1c9d586fc9bdde30e4641"
+    },
+    "docs/parameters.md": {
+      "bytes": 43004,
+      "sha256": "b93f45157c729e02de8e99e66935aa08ca1cc05d3748eaf4b8a0969960dd8561"
+    },
+    "gradio_app.py": {
+      "bytes": 24742,
+      "sha256": "6d7b83168104446ca3faf775027a44d46935c3e4418ad3de244b37562ae1843a"
+    },
+    "gradio_app_voicedesign.py": {
+      "bytes": 25116,
+      "sha256": "7282573a6b7c83c1e6b11dbcc31d8554f3e1271c9c7c03f5ff5c6d5ebb52ab39"
+    },
+    "infer.py": {
+      "bytes": 19435,
+      "sha256": "172bce952d8a1b15372bb9e0b07f8f0569086067a8ca3d3dbe4a65ba0c797825"
+    },
+    "irodori_tts/__init__.py": {
+      "bytes": 487,
+      "sha256": "d72330846415956784f0d5b8837b4968b894554d2df3ef4a294cbf12c61909b0"
+    },
+    "irodori_tts/attention.py": {
+      "bytes": 10518,
+      "sha256": "9ffa06778c2706429c75f4132123055743fbafe30e2a8448078cbca6892f2faf"
+    },
+    "irodori_tts/codec.py": {
+      "bytes": 10903,
+      "sha256": "12a9bf9faf04f8983579ba4cb49a2ab5af21a81b8262f1537eeba9b805f402c4"
+    },
+    "irodori_tts/config.py": {
+      "bytes": 11102,
+      "sha256": "875dea896b1e0fbc063be44a5228de1f57c438dd7f46e4c2b7fee56565aa4dc3"
+    },
+    "irodori_tts/dataset.py": {
+      "bytes": 30337,
+      "sha256": "1245b9973e3a213a79d4c0d562aaf586e83779142376303675277c7081bb6b3e"
+    },
+    "irodori_tts/duration.py": {
+      "bytes": 5059,
+      "sha256": "f3679fbdefadccb5a3cd87e46e3e16bcb8e631640d9068e2346cb159b2b95c8c"
+    },
+    "irodori_tts/gradio_emoji_palette.py": {
+      "bytes": 6008,
+      "sha256": "4c1043c89bd19bd1be69e0b3bc8f0f26cef85c9374114bd574e873a62dde9d6d"
+    },
+    "irodori_tts/inference_runtime.py": {
+      "bytes": 66580,
+      "sha256": "c65d123fdfcaf7811ec495b1a048e2dd838be488850e7be0c8c9c9ac12920440"
+    },
+    "irodori_tts/local_env.py": {
+      "bytes": 3920,
+      "sha256": "4652a1e5c2fe0133a7c49375b5dc60ae887a8dfa82c52141b1ab5bbc635fa544"
+    },
+    "irodori_tts/lora.py": {
+      "bytes": 11078,
+      "sha256": "b1ac619e214be0de445585b2c689253564fbbb41d3380f8c5e1f7a0c427a9311"
+    },
+    "irodori_tts/meanflow.py": {
+      "bytes": 22523,
+      "sha256": "9594f6f5816b6158a393ebfe581437b6fb2566818e80102edc682f61d3ee22e7"
+    },
+    "irodori_tts/model.py": {
+      "bytes": 104337,
+      "sha256": "142c3e6a00676394fc1448696e559b885076913c7b5603361662e00c9e6e1e7b"
+    },
+    "irodori_tts/optim.py": {
+      "bytes": 15781,
+      "sha256": "313f2b8101d8bcb184fc26c6118bf3a815da159c6c4ad2b4c62aa8b07c127601"
+    },
+    "irodori_tts/progress.py": {
+      "bytes": 3390,
+      "sha256": "8c53f9d8ebe26cc310198c53821d3b7c2ad55858bfb7868240a2a75e937a6128"
+    },
+    "irodori_tts/quantization.py": {
+      "bytes": 10837,
+      "sha256": "07e7d7bf6fb4bc76c61e4357e400fea776046029b7688602819ccb4fb1ccf662"
+    },
+    "irodori_tts/rf.py": {
+      "bytes": 23595,
+      "sha256": "cd67c63c795eb64772862074498d8542db38dc0f3c2b8e90f77e8ff104871808"
+    },
+    "irodori_tts/speaker_inversion.py": {
+      "bytes": 6761,
+      "sha256": "33b7d4e69786ae98658a9e2e91c3b68a8197fd0f185d490f618da1f829b17ad4"
+    },
+    "irodori_tts/text_cache.py": {
+      "bytes": 2618,
+      "sha256": "d958aaf6f198da3ab544da7ca7e49177f77116efa22bd340144e3eb2e66f5c79"
+    },
+    "irodori_tts/text_normalization.py": {
+      "bytes": 1773,
+      "sha256": "00e0d7472aed24dbfed631f2691b8690f376df04c9830107813141c3a7815827"
+    },
+    "irodori_tts/tokenizer.py": {
+      "bytes": 5008,
+      "sha256": "3dc39fc1866a7ccaef8ef24493c8831f23fc6df56f228a9a9edd403851aa84e7"
+    },
+    "irodori_tts/watermark.py": {
+      "bytes": 2502,
+      "sha256": "08c168d596656a66bda985b49b7b1b294f29cf03f57e7e286d263be3fd1327bc"
+    },
+    "prepare_manifest.py": {
+      "bytes": 33897,
+      "sha256": "a5a9a02376fec027b932eb7eb1c0c6b88617fd1c6d9631023040cddb1e671afd"
+    },
+    "pyproject.toml": {
+      "bytes": 4237,
+      "sha256": "75aae1f3bf3dda6d586abb6f8b9ede98b08cd97595b63a7db681287210ff6826"
+    },
+    "quantize_checkpoint.py": {
+      "bytes": 7163,
+      "sha256": "c5011ae2758223c9d886be379604b38c9f1cd11b0ad9894d55951e809592d084"
+    },
+    "requirements.txt": {
+      "bytes": 487,
+      "sha256": "119bf89f7bc6750f325057ecf669cf7f6a3e84508c4d2fdfb1e25b550af4939e"
+    },
+    "run.bat": {
+      "bytes": 286,
+      "sha256": "308fffab6415ad7e97b9003c1807cafa8973f1c33a765e5e3b25a702e8a9fc64"
+    },
+    "run_python.bat": {
+      "bytes": 117,
+      "sha256": "31f07e92c481177434a005846ff9ba0952cb7f9925d2ee097b62cb426741cb1f"
+    },
+    "run_python.ps1": {
+      "bytes": 334,
+      "sha256": "a866d8b9c6dbeaef735ccf9c0430f3b6c164de82f6684048c9835fbef144357b"
+    },
+    "run_webui_reference_audio.bat": {
+      "bytes": 127,
+      "sha256": "89b03720cbeb90c12f5980ec77dba868a6c749a55d660571dacd871afeb9c878"
+    },
+    "run_webui_voice_design.bat": {
+      "bytes": 139,
+      "sha256": "49a165db02dc28e6ca5f8ff2dda6d63ae97c7938e7ece6a73204422fd6700c7a"
+    },
+    "scripts/build_release.py": {
+      "bytes": 5417,
+      "sha256": "cae6dfa3ddf9b85d4178af119760bb02601a1d3e9aeca570d0978306e75f652f"
+    },
+    "scripts/check_environment.py": {
+      "bytes": 1935,
+      "sha256": "16562f17c71aa142655fdf40283fec68c7170b41166f56800e5d483890eaaed5"
+    },
+    "scripts/download_models.py": {
+      "bytes": 2478,
+      "sha256": "15fdda30116ead8ef2b8dd902d70dff13580fddaf4b1a3fdb73336f37992e32d"
+    },
+    "scripts/project_env.ps1": {
+      "bytes": 865,
+      "sha256": "e514e7ef10aae9fc863cf1fd402f1b2eeddf8b86a9db2616d9df732860889b44"
+    },
+    "scripts/select_setup_models.ps1": {
+      "bytes": 6197,
+      "sha256": "6bdddef7ae32fd9a48c92e55baf0f0020f42af11f94665390d1e70fefbe93ba1"
+    },
+    "setup.bat": {
+      "bytes": 125,
+      "sha256": "6db1e6a0fcfd630807d9e36a8c4866d230bcd9ebaabd4326998ef1b08fc642ff"
+    },
+    "setup_windows.ps1": {
+      "bytes": 4273,
+      "sha256": "7c14032beb1d7ee8683a2c020ad4b430f97d897c1306f9f1a984094d86b76d95"
+    },
+    "tests/test_absent_speaker.py": {
+      "bytes": 4788,
+      "sha256": "31d7b20049f04d0cb009dab147ae78fc748aae4cb5f14c35da2c476d3672f439"
+    },
+    "tests/test_attention_priority.py": {
+      "bytes": 5113,
+      "sha256": "f467eec2fce9ac3dbf856103a0e0f8ed1babd9021185f4d0f743789493cdd297"
+    },
+    "tests/test_dynamic_text_padding.py": {
+      "bytes": 6106,
+      "sha256": "98199c5a3d750bcbff1a52f97b60d463519c241f7874191e513e112df09d952b"
+    },
+    "tests/test_empty_captions.py": {
+      "bytes": 8535,
+      "sha256": "bb5b9bdb5d66ad6fb89cab20cb844eef6a6bcd9623d2a6f17dbb7df3a02b27e0"
+    },
+    "tests/test_frozen_backbone.py": {
+      "bytes": 8128,
+      "sha256": "b7a86a38ae5a33068a2992c722ff8cf4e54128dbb9feba385305f003c2c6e0af"
+    },
+    "tests/test_text_feature_cache.py": {
+      "bytes": 8774,
+      "sha256": "03094bb8c8649e6d55e00f618efceabfc01ed5bcf04eafdeef06938ada4b6036"
+    },
+    "tests/test_training_condition_assets.py": {
+      "bytes": 5206,
+      "sha256": "0d4eda5f6dabf136585b77b963dc08935a93fb8b37b23f7047aff0d6209f1728"
+    },
+    "train.py": {
+      "bytes": 236575,
+      "sha256": "bfb50b4d784e9b831d248616e684d68a114c74f98b09ae36a06ccd79f749f500"
+    },
+    "uv.lock": {
+      "bytes": 1531903,
+      "sha256": "e30101f85fdb4dc1da1d2841ffb912ebf6093e7aca42ce8f660af6ec179c1dd5"
+    },
+    "はじめに.txt": {
+      "bytes": 679,
+      "sha256": "5b44301043fefc5e133b298bfc71d7f0afeaed243dc012bce8ec95e0098f0141"
+    }
+  }
+}

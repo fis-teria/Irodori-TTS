@@ -13,7 +13,8 @@ class PretrainedTextTokenizer:
     def __init__(self, tokenizer, add_bos: bool = True) -> None:
         self.tokenizer = tokenizer
         self.add_bos = bool(add_bos)
-        # TTS collator uses fixed-length right-padding; enforce this regardless of pretrained defaults.
+        # The collator can trim trailing padding per batch; keep valid positions
+        # stable regardless of pretrained padding defaults.
         self.tokenizer.padding_side = "right"
 
         if self.tokenizer.pad_token_id is None:

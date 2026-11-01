@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import secrets
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -494,12 +495,14 @@ def _default_max_ref_seconds(train_cfg: dict | None) -> float:
 def _load_checkpoint_from_safetensors(
     path: Path,
 ) -> tuple[dict[str, torch.Tensor], dict, dict | None, dict | None]:
-    model_state = load_safetensors_file(str(path), device="cpu")
+    # Avoid native storage/mmap access violations for large checkpoints on Windows.
+    backend = "pread" if sys.platform == "win32" else "mmap"
+    with safe_open(str(path), framework="pt", device="cpu", backend=backend) as handle:
+        metadata = handle.metadata() or {}
+    del handle
+    model_state = load_safetensors_file(str(path), device="cpu", backend=backend)
     if not isinstance(model_state, dict) or not model_state:
         raise ValueError(f"Safetensors checkpoint has no model weights: {path}")
-
-    with safe_open(str(path), framework="pt", device="cpu") as handle:
-        metadata = handle.metadata() or {}
 
     if parse_quantization_metadata(metadata) is not None:
         model_state, _ = unflatten_quantized_state_dict(
@@ -644,16 +647,33 @@ class InferenceRuntime:
             section="checkpoint model_config",
         )
 
-        model = TextToLatentRFDiT(
-            model_cfg,
-            pretrained_backbone_config=text_encoder_config,
-            load_pretrained_backbone_weights=not model_cfg.use_pretrained_text_encoder,
-        )
         quantized_model = is_torchao_quantized_state_dict(model_state)
+        low_memory_load = (
+            sys.platform == "win32"
+            and checkpoint_path.stat().st_size > 4 * 1024**3
+            and model_cfg.use_pretrained_text_encoder
+            and not quantized_model
+        )
+        if low_memory_load:
+            from accelerate import init_empty_weights
+
+            construction_context = init_empty_weights(include_buffers=False)
+        else:
+            construction_context = nullcontext()
+        with construction_context:
+            model = TextToLatentRFDiT(
+                model_cfg,
+                pretrained_backbone_config=text_encoder_config,
+                load_pretrained_backbone_weights=not model_cfg.use_pretrained_text_encoder,
+            )
         model.load_state_dict(
             model_state,
             assign=model_cfg.use_pretrained_text_encoder or quantized_model,
         )
+        if low_memory_load:
+            # Drop state-dict aliases, then cast on CPU before allocating CUDA weights.
+            del model_state
+            model = _move_inference_module(model, device=torch.device("cpu"), dtype=model_dtype)
         model = model.to(model_device)
         model = _move_inference_module(model, device=model_device, dtype=model_dtype)
         model.eval()

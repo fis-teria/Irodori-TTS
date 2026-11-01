@@ -1,0 +1,10 @@
+﻿Irodori-TTS V4 / V4.1 Windows セットアップ
+
+1. ZIPをすべて展開してください。
+2. Python 3.10以上とGit for Windowsを用意し、PATHで実行できるようにしてください。
+3. setup.batを実行し、Small・Large・Animeからダウンロードするモデルを選びます。
+4. セットアップ完了後、run.batからWebUIを起動します。
+
+モデル・仮想環境・キャッシュは展開したフォルダ内に作成されます。
+初回セットアップにはインターネット接続が必要です。
+詳しい手順はLOCAL_SETUP_WINDOWS.md、コードのライセンスはLICENSEを参照してください。

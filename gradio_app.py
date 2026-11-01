@@ -5,6 +5,9 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+# Set workspace paths before Gradio imports Hugging Face and creates temp files.
+from irodori_tts.local_env import OUTPUT_DIR
+
 import gradio as gr
 
 from irodori_tts.gradio_emoji_palette import EMOJI_PALETTE_CSS, build_emoji_palette
@@ -356,7 +359,7 @@ def _run_generation(
         log_fn=stdout_log,
     )
 
-    out_dir = Path("gradio_outputs")
+    out_dir = OUTPUT_DIR / "gradio_reference_audio"
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     out_paths: list[str] = []

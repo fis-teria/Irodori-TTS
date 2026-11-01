@@ -48,6 +48,10 @@ Audio is represented as continuous latent sequences via the codec configured by 
 
 ## Installation
 
+For this Windows workspace, use `setup.bat` and the launchers described in
+[LOCAL_SETUP_WINDOWS.md](LOCAL_SETUP_WINDOWS.md). They keep the environment,
+models, and caches inside this checkout.
+
 ```bash
 git clone https://github.com/Aratako/Irodori-TTS.git
 cd Irodori-TTS
@@ -260,6 +264,18 @@ Generated audio is passed through [SilentCipher](https://github.com/sony/silentc
 
 This section describes how to train **Irodori-TTS-v4.1-Small**. For training instructions
 for previous models, refer to the documentation in the corresponding version tags.
+
+Training reports the number of caption-labeled samples in the training and validation
+splits before starting. Batches without captions automatically skip caption tokenization
+and encoding; batches with captions use the normal conditioning path. Missing, null,
+empty, and whitespace-only captions count as absent. The model architecture and saved
+checkpoint format remain unchanged, so no config edit or data re-encoding is needed.
+
+When the shared pretrained text/caption backbone is fully frozen, it runs under
+`no_grad` and its activation checkpointing/input-gradient hooks are disabled.
+Trainable condition projectors, diffusion LoRA adapters, and the duration predictor
+still receive gradients as configured. If the backbone itself contains trainable
+parameters (including LoRA adapters), its normal gradient/checkpointing path is kept.
 
 ### 1. Prepare the Training Manifest
 

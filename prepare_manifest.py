@@ -15,6 +15,11 @@ from queue import Queue
 from threading import Event, Thread
 from typing import Any
 
+from irodori_tts.local_env import configure_project_environment
+
+# datasets initializes its cache constants at import time.
+configure_project_environment()
+
 import torch
 import torch.multiprocessing as mp
 from datasets import Audio, load_dataset

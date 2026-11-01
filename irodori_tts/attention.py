@@ -3,9 +3,9 @@
 Boolean key-padding masks make ``F.scaled_dot_product_attention`` ineligible for
 the FlashAttention backend, so masked attention silently falls back to slower
 kernels. This module routes masked attention to FlashAttention-3 varlen kernels
-when available (Hopper+, fp16/bf16) and otherwise to SDPA with a cuDNN-first
-backend priority, which is markedly faster than the default dispatch for
-bool-masked inputs.
+when available (Hopper+, fp16/bf16) and otherwise to SDPA with Efficient
+Attention preferred. This avoids cuDNN's costly per-shape plan construction
+when text/audio lengths vary, including checkpoint recomputation.
 
 All helpers take tensors in (B, S, H, D) layout.
 
@@ -30,11 +30,11 @@ try:  # optional dependency: flash_attn_3 prebuilt wheel installs this module
 except Exception:  # pragma: no cover - flash_attn_3 not installed
     _fa3_varlen_func = None
 
-# cuDNN handles bool-masked SDPA well on Ampere+; keep the standard fallbacks
-# behind it for shapes/dtypes it rejects.
+# Prefer Efficient Attention for variable-length masked inputs. Keep cuDNN and
+# math available for shapes/dtypes that Efficient Attention cannot handle.
 _SDPA_PRIORITY = [
-    SDPBackend.CUDNN_ATTENTION,
     SDPBackend.EFFICIENT_ATTENTION,
+    SDPBackend.CUDNN_ATTENTION,
     SDPBackend.MATH,
 ]
 
@@ -132,7 +132,7 @@ def masked_sdpa(
     v: torch.Tensor,
     attn_mask: torch.Tensor | None,
 ) -> torch.Tensor:
-    """SDPA in (B, S, H, D) layout with the cuDNN-first backend priority."""
+    """SDPA in (B, S, H, D) layout with Efficient Attention preferred."""
     if attn_mask is None or not q.is_cuda:
         return _sdpa(q, k, v, attn_mask)
     with sdpa_kernel(_SDPA_PRIORITY, set_priority=True):

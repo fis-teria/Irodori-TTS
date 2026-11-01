@@ -553,6 +553,8 @@ class TTSCollator:
     latent_length_bucket_size: int = 0
     max_text_len: int = 256
     max_caption_len: int | None = None
+    skip_empty_captions: bool = True
+    dynamic_text_padding: bool = False
 
     def __call__(self, batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         texts = [x["text"] for x in batch]
@@ -565,17 +567,33 @@ class TTSCollator:
 
         text_ids, text_mask = self.tokenizer.batch_encode(texts, max_length=self.max_text_len)
         token_counts = text_mask.sum(dim=1)
+        if self.dynamic_text_padding:
+            # Preserve the tokenizer's existing BOS/truncation behavior and the
+            # duration feature normalization limit. Remove only trailing columns
+            # that are masked for the entire batch, on CPU before CUDA transfer.
+            # Keep one column for empty inputs / all-masked attention fallbacks.
+            used_columns = text_mask.any(dim=0).nonzero(as_tuple=True)[0]
+            text_length = int(used_columns[-1]) + 1 if used_columns.numel() else 1
+            text_ids = text_ids[:, :text_length].contiguous()
+            text_mask = text_mask[:, :text_length].contiguous()
         caption_ids = None
         caption_mask = None
         if self.caption_tokenizer is not None:
-            max_caption_len = self.max_caption_len
-            if max_caption_len is None:
-                max_caption_len = self.max_text_len
-            caption_ids, caption_mask = self.caption_tokenizer.batch_encode(
-                captions,
-                max_length=max_caption_len,
-            )
-            caption_mask = caption_mask & has_caption[:, None]
+            if self.skip_empty_captions and not bool(has_caption.any()):
+                # Decide from the source labels on CPU, before tokenization or
+                # CUDA transfer. A zero-length sequence explicitly requests the
+                # model's empty-caption path, without a GPU scalar read/sync.
+                caption_ids = torch.empty((bsz, 0), dtype=torch.long)
+                caption_mask = torch.empty((bsz, 0), dtype=torch.bool)
+            else:
+                max_caption_len = self.max_caption_len
+                if max_caption_len is None:
+                    max_caption_len = self.max_text_len
+                caption_ids, caption_mask = self.caption_tokenizer.batch_encode(
+                    captions,
+                    max_length=max_caption_len,
+                )
+                caption_mask = caption_mask & has_caption[:, None]
 
         if self.fixed_target_latent_steps is not None:
             max_t = int(self.fixed_target_latent_steps)

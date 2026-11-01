@@ -149,6 +149,9 @@ class TrainConfig:
     # skipping (every block is checkpointed); each kept block costs roughly
     # one block's activations of extra memory.
     gradient_checkpointing_store_every: int = 0
+    skip_absent_speaker_encoder: bool = True
+    cache_frozen_text_features: bool = True
+    text_feature_cache_max_mb: int = 256
     train_mode: str = "rf"
     learning_rate: float = 1e-4
     pretrained_text_encoder_learning_rate: float = 1e-5
@@ -179,6 +182,8 @@ class TrainConfig:
     grad_clip_norm: float = 1.0
     gradient_accumulation_steps: int = 1
     max_text_len: int = 256
+    # Applies to pretrained text encoders (V4); keep the truncation limit above.
+    dynamic_text_padding: bool = True
     max_caption_len: int | None = None
     text_condition_dropout: float = 0.1
     caption_condition_dropout: float = 0.1

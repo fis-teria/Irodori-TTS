@@ -219,3 +219,6 @@ gradio_outputs/
 gradio_outputs_voicedesign/
 outputs/
 data/
+model_data/
+.cache/
+.tools/

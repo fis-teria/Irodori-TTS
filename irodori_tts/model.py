@@ -17,6 +17,7 @@ from .attention import (
 )
 from .config import ModelConfig
 from .speaker_inversion import SPEAKER_INVERSION_UNCOND_MODES, SpeakerInversionEmbedding
+from .text_cache import FrozenTextFeatureCache, TextFeatureKey
 
 DURATION_SPEAKER_FUSIONS = {
     "concat",
@@ -768,25 +769,103 @@ class PretrainedTextBackbone(nn.Module):
         self.repo_id = str(repo_id)
         self.revision = revision
         self.config_dict = config.to_dict()
+        self._frozen_text_cache = None
         for parameter in self.backbone.parameters():
             parameter.requires_grad_(True)
 
-    def forward(self, input_ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        outputs = self.backbone(
-            input_ids=input_ids,
-            attention_mask=mask,
-            return_dict=True,
+    def has_trainable_parameters(self) -> bool:
+        # Check the live modules, including adapters added after construction.
+        # Token IDs/masks have no upstream gradient to preserve when frozen.
+        return any(parameter.requires_grad for parameter in self.backbone.parameters())
+
+    def set_feature_cache(self, max_bytes: int = 0) -> None:
+        self._frozen_text_cache = FrozenTextFeatureCache(max_bytes) if max_bytes > 0 else None
+
+    def _has_stochastic_training(self) -> bool:
+        if not self.training:
+            return False
+        if any(isinstance(m, nn.Dropout) and m.training and m.p > 0 for m in self.backbone.modules()):
+            return True
+        # HF also uses functional dropout controlled by config (e.g. ModernBERT).
+        for name, value in vars(self.backbone.config).items():
+            if any(label in name for label in ("dropout", "layerdrop", "drop_path", "pdrop")):
+                if isinstance(value, (int, float)) and value > 0:
+                    return True
+        return False
+
+    def _clear_feature_cache(self) -> None:
+        cache = getattr(self, "_frozen_text_cache", None)
+        if cache is not None:
+            cache.clear()
+
+    def _load_from_state_dict(self, *args, **kwargs):
+        self._clear_feature_cache()
+        return super()._load_from_state_dict(*args, **kwargs)
+
+    def _apply(self, fn, recurse=True):
+        self._clear_feature_cache()
+        return super()._apply(fn, recurse=recurse)
+
+    def _encode_uncached(self, input_ids, mask, trainable):
+        # Projectors remain outside no_grad and outside the feature cache.
+        with torch.set_grad_enabled(torch.is_grad_enabled() and trainable):
+            outputs = self.backbone(input_ids=input_ids, attention_mask=mask, return_dict=True)
+            state = outputs.last_hidden_state
+            return state * mask.unsqueeze(-1).to(dtype=state.dtype)
+
+    def forward(
+        self, input_ids: torch.Tensor, mask: torch.Tensor,
+        *, cache_keys: tuple[TextFeatureKey, ...] | None = None,
+    ) -> torch.Tensor:
+        trainable = self.has_trainable_parameters()
+        cache = self._frozen_text_cache
+        stochastic = cache is not None and self._has_stochastic_training()
+        if cache is not None and (trainable or stochastic):
+            # An unfreeze / stochastic phase must never leave reusable old values.
+            cache.clear()
+        if cache is None or cache_keys is None or trainable or stochastic:
+            if cache is not None:
+                cache.bypasses += 1
+            return self._encode_uncached(input_ids, mask, trainable)
+        if len(cache_keys) != input_ids.shape[0] or any(
+            len(k[0]) > input_ids.shape[1] for k in cache_keys
+        ):
+            raise ValueError("Feature cache keys do not match the text batch shape.")
+        device_type = input_ids.device.type
+        namespace = (
+            self.training, torch.is_inference_mode_enabled(), input_ids.device,
+            torch.get_autocast_dtype(device_type) if torch.is_autocast_enabled(device_type) else None,
+            torch.backends.cuda.matmul.allow_tf32,
         )
-        state = outputs.last_hidden_state
-        return state * mask.unsqueeze(-1).to(dtype=state.dtype)
+        entries = cache.lookup(namespace, cache_keys)
+        if any(value is None for value in entries):
+            # Fill lazily with the original batch shape/dtype; no extra quantization.
+            fresh = self._encode_uncached(input_ids, mask, trainable=False)
+            for i, key in enumerate(cache_keys):
+                if entries[i] is None:
+                    value = fresh[i, :len(key[0])].detach().clone()
+                    cache.put(namespace, key, value)
+                    entries[i] = value
+        state = nn.utils.rnn.pad_sequence(entries, batch_first=True)
+        return F.pad(state, (0, 0, 0, input_ids.shape[1] - state.shape[1]))
+
 
     def set_gradient_checkpointing(self, enabled: bool) -> None:
+        trainable = self.has_trainable_parameters()
+        enabled = bool(enabled) and trainable
         method_name = (
             "gradient_checkpointing_enable" if enabled else "gradient_checkpointing_disable"
         )
         method = getattr(self.backbone, method_name, None)
         if callable(method):
             method()
+        if not trainable:
+            # HF checkpointing can attach an embedding-output requires_grad
+            # hook even when every weight is frozen. Remove a previously added
+            # hook as well, e.g. when the backbone was frozen after setup.
+            disable_input_grads = getattr(self.backbone, "disable_input_require_grads", None)
+            if callable(disable_input_grads):
+                disable_input_grads()
 
 
 def _pretrained_hidden_size(config: object) -> int:
@@ -857,8 +936,12 @@ class PretrainedConditionProjector(nn.Module):
         backbone: PretrainedTextBackbone,
         input_ids: torch.Tensor,
         mask: torch.Tensor,
+        *, cache_keys: tuple[TextFeatureKey, ...] | None = None,
     ) -> torch.Tensor:
-        state = backbone(input_ids, mask)
+        state = (
+            backbone(input_ids, mask) if cache_keys is None
+            else backbone(input_ids, mask, cache_keys=cache_keys)
+        )
         if (
             not torch.is_autocast_enabled(state.device.type)
             and state.dtype != self.projector.weight.dtype
@@ -1779,6 +1862,8 @@ class TextToLatentRFDiT(nn.Module):
         text_condition_dropout: torch.Tensor | None = None,
         speaker_condition_dropout: torch.Tensor | None = None,
         caption_condition_dropout: torch.Tensor | None = None,
+        no_reference_audio: bool = False,
+        text_cache_keys: tuple[TextFeatureKey, ...] | None = None,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor,
@@ -1788,6 +1873,7 @@ class TextToLatentRFDiT(nn.Module):
         torch.Tensor | None,
     ]:
         if text_condition_dropout is not None:
+            text_cache_keys = None  # The CPU key describes the original mask.
             text_mask = text_mask.clone()
             text_mask[text_condition_dropout] = False
         if self.cfg.use_speaker_condition_resolved:
@@ -1825,7 +1911,12 @@ class TextToLatentRFDiT(nn.Module):
         if self.pretrained_text_backbone is None:
             text_state = self.text_encoder(text_input_ids, text_mask)
         else:
-            text_state = self.text_encoder(self.pretrained_text_backbone, text_input_ids, text_mask)
+            if text_cache_keys is None:
+                text_state = self.text_encoder(self.pretrained_text_backbone, text_input_ids, text_mask)
+            else:
+                text_state = self.text_encoder(
+                    self.pretrained_text_backbone, text_input_ids, text_mask, cache_keys=text_cache_keys,
+                )
         text_state = self.text_norm(text_state)
         ref_state = None
         if self.cfg.use_speaker_condition_resolved:
@@ -1852,9 +1943,32 @@ class TextToLatentRFDiT(nn.Module):
                         mask=ref_mask,
                         patch_size=self.cfg.speaker_patch_size,
                     )
-                    ref_state = self.speaker_encoder(ref_latent, ref_mask)
-                    ref_state = self.speaker_norm(ref_state)
-                    ref_state, ref_mask = self._prepend_masked_mean_token(ref_state, ref_mask)
+                    can_skip = (
+                        no_reference_audio
+                        and (not self.training or self.cfg.dropout == 0)
+                        and not any(p.requires_grad for p in self.speaker_encoder.parameters())
+                        and not any(p.requires_grad for p in self.speaker_norm.parameters())
+                    )
+                    if can_skip:
+                        # Preserve the old context length (including summary token).
+                        # The CPU data pipeline certified that every reference is
+                        # absent. Keep the modules/checkpoint schema, but do not
+                        # encode the target-latent placeholders only to mask them.
+                        device_type = ref_latent.device.type
+                        dtype = (
+                            torch.get_autocast_dtype(device_type)
+                            if torch.is_autocast_enabled(device_type)
+                            else self.speaker_encoder.in_proj.weight.dtype
+                        )
+                        ref_state = torch.zeros(
+                            (ref_latent.shape[0], ref_latent.shape[1] + 1, self.cfg.speaker_dim),
+                            device=ref_latent.device, dtype=dtype,
+                        )
+                        ref_mask = torch.zeros(ref_state.shape[:2], device=ref_latent.device, dtype=torch.bool)
+                    else:
+                        ref_state = self.speaker_encoder(ref_latent, ref_mask)
+                        ref_state = self.speaker_norm(ref_state)
+                        ref_state, ref_mask = self._prepend_masked_mean_token(ref_state, ref_mask)
             ref_state, ref_mask = self._apply_speaker_condition_dropout(
                 speaker_state=ref_state,
                 speaker_mask=ref_mask,
@@ -1865,13 +1979,31 @@ class TextToLatentRFDiT(nn.Module):
             )
         caption_state = None
         if self.cfg.use_caption_condition:
-            if self.pretrained_text_backbone is None:
+            if caption_input_ids.shape[1] == 0:
+                # The CPU collator has already checked that this batch has no
+                # captions. Keep the checkpoint architecture, but omit caption
+                # tokens from both encoding and the attention context.
+                caption_state = text_state.new_zeros(
+                    (text_state.shape[0], 0, self.cfg.caption_dim_resolved)
+                )
+                if torch.is_grad_enabled():
+                    # The old fully masked path produced zero gradients for
+                    # these parameters. Preserve that (rather than grad=None)
+                    # for AdamW decay/momentum and DDP, without running layers.
+                    for module in (self.caption_encoder, self.caption_norm):
+                        for parameter in module.parameters():
+                            if parameter.requires_grad and parameter.numel() > 0:
+                                caption_state = caption_state + (
+                                    parameter.reshape(-1)[0].to(caption_state.dtype) * 0.0
+                                )
+            elif self.pretrained_text_backbone is None:
                 caption_state = self.caption_encoder(caption_input_ids, caption_mask)
             else:
                 caption_state = self.caption_encoder(
                     self.pretrained_text_backbone, caption_input_ids, caption_mask
                 )
-            caption_state = self.caption_norm(caption_state)
+            if caption_input_ids.shape[1] != 0:
+                caption_state = self.caption_norm(caption_state)
         return text_state, text_mask, ref_state, ref_mask, caption_state, caption_mask
 
     def forward_with_encoded_conditions(
@@ -2007,6 +2139,8 @@ class TextToLatentRFDiT(nn.Module):
             torch.Tensor | None,
         ]
         | None = None,
+        no_reference_audio: bool = False,
+        text_cache_keys: tuple[TextFeatureKey, ...] | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         if duration_features is not None and encoded_conditions is not None:
             raise ValueError("encoded_conditions is not supported by the duration path.")
@@ -2025,6 +2159,8 @@ class TextToLatentRFDiT(nn.Module):
                 ref_mask=ref_mask,
                 caption_input_ids=caption_input_ids,
                 caption_mask=caption_mask,
+                no_reference_audio=no_reference_audio,
+                text_cache_keys=text_cache_keys,
             )
             if duration_only:
                 return self.predict_duration_log_frames(
@@ -2115,6 +2251,8 @@ class TextToLatentRFDiT(nn.Module):
                 text_condition_dropout=text_condition_dropout,
                 speaker_condition_dropout=speaker_condition_dropout,
                 caption_condition_dropout=caption_condition_dropout,
+                no_reference_audio=no_reference_audio,
+                text_cache_keys=text_cache_keys,
             )
         else:
             if any(
