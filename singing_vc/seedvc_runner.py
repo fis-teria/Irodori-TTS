@@ -3,8 +3,9 @@
 The checkpoint and config are always passed explicitly, so upstream never
 auto-downloads or substitutes its speech (non-f0) model. The config is checked
 before any model loads: f0 conditioning must match the request and the model
-must be the 44.1 kHz BigVGAN variant. Only the standard library, PyYAML and
-the Seed-VC venv's torch are used.
+must be the 44.1 kHz BigVGAN variant. Upstream writes into a fresh per-run
+temporary folder, so existing files are never deleted. Only the standard
+library, PyYAML and the Seed-VC venv's torch are used.
 """
 
 from __future__ import annotations
@@ -13,9 +14,15 @@ import argparse
 import json
 import os
 import runpy
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
+
+
+SINGING_SAMPLE_RATE = 44100
+SINGING_VOCODER = {"type": "bigvgan", "name": "nvidia/bigvgan_v2_44khz_128band_512x"}
 
 
 class RunnerError(RuntimeError):
@@ -38,8 +45,9 @@ def check_config(config: dict, f0_condition: bool) -> dict:
         params = config["model_params"]
         config_f0 = bool(params["length_regulator"]["f0_condition"]) and bool(params["DiT"]["f0_condition"])
         vocoder = params["vocoder"]
-    except (KeyError, TypeError, ValueError) as exc:
-        raise RunnerError(f"Seed-VC config is missing required keys: {exc}") from exc
+        vocoder_type, vocoder_name = vocoder["type"], vocoder.get("name")
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise RunnerError(f"Seed-VC config is missing required keys: {exc!r}") from exc
     if f0_condition and not config_f0:
         raise RunnerError("f0-condition=true was requested, but the config is not f0-conditioned.")
     if not f0_condition and config_f0:
@@ -47,14 +55,42 @@ def check_config(config: dict, f0_condition: bool) -> dict:
             "f0-condition=false cannot run the f0-conditioned singing model "
             "(upstream would switch to 22.05 kHz speech settings); pass a non-f0 config explicitly."
         )
-    if f0_condition and sample_rate != 44100:
+    if f0_condition and sample_rate != SINGING_SAMPLE_RATE:
         raise RunnerError(f"Singing model must be 44.1 kHz, config says {sample_rate} Hz.")
+    if f0_condition and (vocoder_type, vocoder_name) != (SINGING_VOCODER["type"], SINGING_VOCODER["name"]):
+        raise RunnerError(
+            f"Singing model must use vocoder {SINGING_VOCODER['type']} {SINGING_VOCODER['name']}, "
+            f"config says {vocoder_type!r} {vocoder_name!r}."
+        )
     return {
         "sample_rate": sample_rate,
         "f0_condition": config_f0,
-        "vocoder": vocoder.get("name") or vocoder.get("type"),
+        "vocoder": vocoder_name or vocoder_type,
         "speech_tokenizer": params.get("speech_tokenizer", {}).get("name"),
     }
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    if os.path.normcase(str(a)) == os.path.normcase(str(b)):
+        return True
+    try:
+        return os.path.samefile(a, b)  # also catches hardlinks and symlinks to the same file
+    except OSError:
+        return False  # at least one does not exist yet, so they cannot be the same file
+
+
+def check_output_paths(args: argparse.Namespace) -> None:
+    """Reject outputs that would overwrite each other or any input; call before writing anything."""
+    if args.output_wav.is_dir() or args.report_json.is_dir():
+        raise RunnerError("output-wav and report-json must be file paths, not folders.")
+    if _same_file(args.output_wav, args.report_json):
+        raise RunnerError(f"output-wav and report-json are the same file: {args.output_wav}")
+    for out_name in ("output_wav", "report_json"):
+        for in_name in ("source", "target", "checkpoint", "config"):
+            if _same_file(getattr(args, out_name), getattr(args, in_name)):
+                raise RunnerError(
+                    f"{out_name.replace('_', '-')} would overwrite {in_name}: {getattr(args, in_name)}"
+                )
 
 
 def upstream_argv(args: argparse.Namespace, raw_dir: Path) -> list[str]:
@@ -112,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         raise RunnerError("length-adjust must be in (0, 4].")
     if args.diffusion_steps < 1:
         raise RunnerError("diffusion-steps must be >= 1.")
+    check_output_paths(args)
 
     import yaml
 
@@ -124,23 +161,23 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     output_wav = args.output_wav
-    raw_dir = output_wav.parent / "seedvc_raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    for stale in raw_dir.glob("*.wav"):
-        stale.unlink()
-
-    os.chdir(args.seedvc_dir)  # upstream resolves ./checkpoints and ./modules from cwd
-    sys.path.insert(0, str(args.seedvc_dir))
-    sys.argv = upstream_argv(args, raw_dir)
-    started = time.perf_counter()
-    runpy.run_path(str(args.seedvc_dir / "inference.py"), run_name="__main__")
-    elapsed = time.perf_counter() - started
-
-    produced = sorted(raw_dir.glob("*.wav"))
-    if len(produced) != 1:
-        raise RunnerError(f"Expected one Seed-VC output in {raw_dir}, found {len(produced)}.")
     output_wav.parent.mkdir(parents=True, exist_ok=True)
-    produced[0].replace(output_wav)
+    # A fresh folder owned by this run: nothing that existed before is touched or deleted.
+    raw_dir = Path(tempfile.mkdtemp(prefix="seedvc_raw_", dir=output_wav.parent))
+    try:
+        os.chdir(args.seedvc_dir)  # upstream resolves ./checkpoints and ./modules from cwd
+        sys.path.insert(0, str(args.seedvc_dir))
+        sys.argv = upstream_argv(args, raw_dir)
+        started = time.perf_counter()
+        runpy.run_path(str(args.seedvc_dir / "inference.py"), run_name="__main__")
+        elapsed = time.perf_counter() - started
+
+        produced = sorted(raw_dir.glob("*.wav"))
+        if len(produced) != 1:
+            raise RunnerError(f"Expected one Seed-VC output in {raw_dir}, found {len(produced)}.")
+        produced[0].replace(output_wav)
+    finally:
+        shutil.rmtree(raw_dir, ignore_errors=True)
 
     import torch
 

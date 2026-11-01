@@ -300,7 +300,10 @@ def run_pipeline(options: SingingOptions, log: LogFn = print) -> dict:
 
         analyze = [str(SEEDVC_PYTHON), tool, "analyze", "--source", str(run_dir / "source.wav"),
                    "--reference", str(run_dir / "reference.wav"), "--converted", str(run_dir / "converted.wav"),
-                   "--semitone-shift", str(int(options.semitone_shift)), "--json", str(run_dir / "analysis.json")]
+                   "--semitone-shift", str(int(options.semitone_shift)),
+                   "--length-adjust", repr(float(options.length_adjust)), "--json", str(run_dir / "analysis.json")]
+        if options.auto_f0_adjust:
+            analyze.append("--auto-f0-adjust")
         if not options.f0_report:
             analyze.append("--skip-f0")
         step("analyze", analyze)
@@ -357,6 +360,11 @@ def write_summary_ja(run_dir: Path, metadata: dict) -> None:
             f"{f0['within_50_cents_ratio']:.1%}, オクターブ誤り {f0['octave_error_ratio']:.1%}, "
             f"相関 {f0['f0_correlation']}, 有声区間 IoU {f0['voicing_overlap_iou']}"
         )
+    for key in ("not_comparable_reason", "cents_not_comparable_reason"):
+        if key in f0:
+            lines.append(f"- F0 比較の制限: {f0[key]}")
+    if f0:
+        lines.append("- F0 指標は同じフレーム位置での音高一致のみを示します。発音・立ち上がりのタイミングやずれは別途確認が必要です。")
     if metadata.get("error"):
         lines += ["", "## エラー", "```", metadata["error"], "```"]
     lines += ["", "注意: 上記は技術的な客観指標のみです。声の似ている度合い・歌唱品質は試聴による確認が必要です。"]

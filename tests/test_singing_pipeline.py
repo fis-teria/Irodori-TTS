@@ -1,12 +1,18 @@
 """Argument, command and failure-path checks for the singing prototype (no models loaded)."""
 
 import json
+import math
+import os
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from singing_vc import cli, pipeline, seedvc_runner
+import numpy as np
+
+from singing_vc import audio_tool, cli, pipeline, seedvc_runner
 from singing_vc.pipeline import PipelineError, SingingOptions
 
 
@@ -23,6 +29,17 @@ def _config(f0, sr=44100):
 
 def _quiet(_line):
     pass
+
+
+# Stand-in for upstream inference.py: writes one WAV into --output, like the real script.
+FAKE_INFERENCE = """
+import sys
+from pathlib import Path
+out = Path(sys.argv[sys.argv.index("--output") + 1])
+out.mkdir(parents=True, exist_ok=True)
+(out / "vc_fake.wav").write_bytes(b"converted")
+"""
+FAKE_TORCH = types.SimpleNamespace(__version__="fake", cuda=types.SimpleNamespace(is_available=lambda: False))
 
 
 class SingingPipelineTests(unittest.TestCase):
@@ -160,6 +177,167 @@ class SingingPipelineTests(unittest.TestCase):
 
         facts = seedvc_runner.check_config(yaml.safe_load(preset.read_text(encoding="utf-8")), True)
         self.assertEqual(facts["vocoder"], "nvidia/bigvgan_v2_44khz_128band_512x")
+
+    def test_runner_rejects_unsupported_vocoder(self):
+        hifigan = _config(True)
+        hifigan["model_params"]["vocoder"] = {"type": "hifigan"}
+        wrong_name = _config(True)
+        wrong_name["model_params"]["vocoder"]["name"] = "nvidia/bigvgan_v2_22khz_80band_256x"
+        for config in (hifigan, wrong_name):
+            with self.assertRaisesRegex(seedvc_runner.RunnerError, "must use vocoder"):
+                seedvc_runner.check_config(config, True)
+        for malformed in ("bigvgan", None, ["bigvgan"], {"name": "nvidia/bigvgan_v2_44khz_128band_512x"}):
+            config = _config(True)
+            config["model_params"]["vocoder"] = malformed
+            with self.subTest(vocoder=malformed), self.assertRaisesRegex(seedvc_runner.RunnerError, "missing"):
+                seedvc_runner.check_config(config, True)
+        del hifigan["model_params"]["vocoder"]
+        with self.assertRaisesRegex(seedvc_runner.RunnerError, "missing"):
+            seedvc_runner.check_config(hifigan, True)
+
+    def _runner_files(self):
+        import yaml
+
+        root = self.tmp / "runner"
+        seedvc = root / "seed-vc"
+        seedvc.mkdir(parents=True)
+        (seedvc / "inference.py").write_text(FAKE_INFERENCE, encoding="utf-8")
+        files = {"source": root / "source.wav", "target": root / "reference.wav", "checkpoint": root / "m.pth",
+                 "config": root / "c.yml"}
+        for name, path in files.items():
+            path.write_bytes(name.encode() * 4)
+        files["config"].write_text(yaml.safe_dump(_config(True)), encoding="utf-8")
+        snapshot = {name: path.read_bytes() for name, path in files.items()}
+        return root, seedvc, files, snapshot
+
+    @staticmethod
+    def _runner_args(seedvc, files, output_wav, report_json):
+        args = ["--seedvc-dir", str(seedvc), "--output-wav", str(output_wav), "--report-json", str(report_json)]
+        for name, path in files.items():
+            args += [f"--{name}", str(path)]
+        return args
+
+    @staticmethod
+    def _run_runner(args):
+        cwd, path, argv = os.getcwd(), list(sys.path), list(sys.argv)
+        try:
+            with mock.patch.dict(sys.modules, {"torch": FAKE_TORCH}), mock.patch.dict(os.environ):
+                return seedvc_runner.main(args)
+        finally:
+            os.chdir(cwd)
+            sys.path[:], sys.argv[:] = path, argv
+
+    def test_runner_rejects_output_collisions_before_writing(self):
+        root, seedvc, files, snapshot = self._runner_files()
+        hardlink = root / "hardlinked reference.wav"
+        os.link(files["target"], hardlink)
+        cases = {
+            "output is source": (files["source"], root / "r.json"),
+            "report is config": (root / "o.wav", files["config"]),
+            "report is checkpoint": (root / "o.wav", files["checkpoint"]),
+            "output is hardlink of target": (hardlink, root / "r.json"),
+            "output equals report": (root / "same.out", root / "same.out"),
+        }
+        for label, (output_wav, report_json) in cases.items():
+            with self.subTest(label), self.assertRaises(seedvc_runner.RunnerError):
+                self._run_runner(self._runner_args(seedvc, files, output_wav, report_json))
+        self.assertEqual({name: path.read_bytes() for name, path in files.items()}, snapshot)
+        self.assertEqual(hardlink.read_bytes(), snapshot["target"])
+        self.assertFalse(any(root.glob("seedvc_raw*")))
+        self.assertFalse((root / "r.json").exists() or (root / "o.wav").exists())
+
+    def test_runner_uses_private_raw_dir_and_keeps_existing_files(self):
+        root, seedvc, files, snapshot = self._runner_files()
+        old_raw = root / "seedvc_raw"
+        old_raw.mkdir()
+        (old_raw / "earlier run.wav").write_bytes(b"keep me")
+        (root / "unrelated.wav").write_bytes(b"keep me too")
+        output_wav, report_json = root / "converted.wav", root / "seedvc_report.json"
+        self.assertEqual(self._run_runner(self._runner_args(seedvc, files, output_wav, report_json)), 0)
+        self.assertEqual(output_wav.read_bytes(), b"converted")
+        report = json.loads(report_json.read_text(encoding="utf-8"))
+        raw_arg = Path(report["upstream_argv"][report["upstream_argv"].index("--output") + 1])
+        self.assertNotEqual(raw_arg, old_raw)
+        self.assertFalse(raw_arg.exists())  # the per-run folder is removed after the move
+        self.assertEqual((old_raw / "earlier run.wav").read_bytes(), b"keep me")
+        self.assertEqual((root / "unrelated.wav").read_bytes(), b"keep me too")
+        self.assertEqual({name: path.read_bytes() for name, path in files.items()}, snapshot)
+
+    def _fake_pipeline_run(self, output_dir, broken_file, broken_text):
+        def fake_step(name, command, log_dir, **_kwargs):
+            run_dir = log_dir.parent
+            outputs = {"prepare_source": {"source.wav": "RIFF"},
+                       "seedvc_singing": {"converted.wav": "RIFF", "seedvc_report.json": "{}"},
+                       "analyze": {"analysis.json": "{}"}}.get(name, {})
+            for file_name, text in outputs.items():
+                (run_dir / file_name).write_text(broken_text if file_name == broken_file else text, encoding="utf-8")
+            return 0.0
+
+        options = self.options(reference_wav=str(self.wavs["reference"]), output_dir=str(output_dir))
+        with mock.patch.object(pipeline, "check_environment", return_value=[]), \
+                mock.patch.object(pipeline, "default_seedvc_model", return_value=("c.pth", "c.yml")), \
+                mock.patch.object(pipeline, "child_environment", return_value={}), \
+                mock.patch.object(pipeline, "git_revision", return_value=None), \
+                mock.patch.object(pipeline, "run_step", side_effect=fake_step):
+            return pipeline.run_pipeline(options, log=_quiet)
+
+    def test_pipeline_records_unexpected_report_errors(self):
+        cases = {"truncated seedvc report": ("seedvc_report.json", '{"elapsed', json.JSONDecodeError),
+                 "analysis without converted facts": ("analysis.json", '{"source": {}}', KeyError)}
+        for index, (label, (broken_file, text, error)) in enumerate(cases.items()):
+            output_dir = self.tmp / f"out{index}"
+            with self.subTest(label):
+                with self.assertRaises(error):
+                    self._fake_pipeline_run(output_dir, broken_file, text)
+                (run_dir,) = output_dir.iterdir()
+                metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+                self.assertEqual(metadata["status"], "failed")
+                self.assertTrue(metadata["error"].startswith(error.__name__))
+                self.assertIn("finished_at", metadata)
+                self.assertIn("(failed)", (run_dir / "summary_ja.md").read_text(encoding="utf-8"))
+
+    def test_cli_keeps_json_offline_and_f0_report_unless_flag_given(self):
+        defaults = self.tmp / "opts.json"
+        defaults.write_text(json.dumps({"tts_text": "a", "offline": False, "f0_report": False}), encoding="utf-8")
+        base = ["--options-json", str(defaults), "--source", str(self.wavs["source"])]
+        options, _ = cli.parse_options(base)
+        self.assertEqual((options.offline, options.f0_report), (False, False))
+        defaults.write_text(json.dumps({"tts_text": "a", "offline": True, "f0_report": True}), encoding="utf-8")
+        options, _ = cli.parse_options(base + ["--online", "--no-f0-report"])
+        self.assertEqual((options.offline, options.f0_report), (False, False))
+
+    def test_f0_compare_matches_requested_shift(self):
+        src = np.concatenate([np.linspace(220.0, 440.0, 50), [np.nan] * 5])
+        result = audio_tool.compare_contours(src, src * 2 ** (2 / 12), 2)
+        self.assertEqual(result["median_abs_cents_error"], 0.0)
+        self.assertEqual(result["within_50_cents_ratio"], 1.0)
+        self.assertEqual(result["f0_correlation"], 1.0)
+        self.assertNotIn("not_comparable_reason", result)
+
+    def test_f0_compare_skips_when_timing_changes(self):
+        src = np.linspace(220.0, 440.0, 50)
+        result = audio_tool.compare_contours(src, src, 0, length_adjust=1.5)
+        self.assertIn("length_adjust=1.5", result["not_comparable_reason"])
+        self.assertFalse({"median_abs_cents_error", "f0_correlation", "frames_compared"} & set(result))
+
+    def test_f0_compare_auto_adjust_drops_fixed_shift_metrics(self):
+        src = np.linspace(220.0, 440.0, 50)
+        result = audio_tool.compare_contours(src, src * 1.3, 3, auto_f0_adjust=True)
+        self.assertIsNone(result["expected_shift_semitones"])
+        self.assertIn("auto_f0_adjust", result["cents_not_comparable_reason"])
+        self.assertNotIn("median_abs_cents_error", result)
+        self.assertEqual(result["f0_correlation"], 1.0)
+
+    def test_f0_compare_constant_contour_is_valid_json(self):
+        flat = np.full(40, 330.0)
+        result = audio_tool.compare_contours(flat, flat, 0)
+        self.assertIsNone(result["f0_correlation"])
+        self.assertEqual(result["median_abs_cents_error"], 0.0)
+        json.dumps(result, allow_nan=False)
+        unvoiced = audio_tool.compare_contours(np.full(40, np.nan), flat, 0)
+        self.assertIn("fewer than 10", unvoiced["not_comparable_reason"])
+        json.dumps(unvoiced, allow_nan=False)
+        self.assertTrue(math.isclose(audio_tool.compare_contours(flat, flat * 2, 0)["octave_error_ratio"], 1.0))
 
     def test_runner_rejects_missing_inputs(self):
         args = ["--seedvc-dir", str(self.tmp), "--source", str(self.tmp / "s.wav"),

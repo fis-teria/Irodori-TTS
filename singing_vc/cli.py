@@ -98,8 +98,11 @@ def parse_options(argv: list[str] | None = None) -> tuple[SingingOptions, bool]:
     if not args.source_wav:
         parser.error("--source is required")
     values = {name: getattr(args, name) for name in names if hasattr(args, name)}
-    values["offline"] = not args.online
-    values["f0_report"] = not args.no_f0_report
+    # These flags only switch away from the defaults, so JSON values stand unless a flag is given.
+    if args.online:
+        values["offline"] = False
+    if args.no_f0_report:
+        values["f0_report"] = False
     return SingingOptions(**values), bool(args.dry_run)
 
 

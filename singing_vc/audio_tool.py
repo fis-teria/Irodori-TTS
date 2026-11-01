@@ -44,7 +44,7 @@ def waveform_facts(path: Path) -> dict:
     return {
         "path": str(path), "sample_rate": int(sample_rate), "channels": int(audio.shape[1]),
         "frames": int(audio.shape[0]), "duration_seconds": round(audio.shape[0] / sample_rate, 4),
-        "finite": finite, "peak": round(float(np.abs(audio).max()) if audio.size else 0.0, 5),
+        "finite": finite, "peak": round(float(np.abs(audio).max()) if audio.size else 0.0, 5) if finite else None,
         "clipped_sample_ratio": round(float(np.mean(np.abs(audio) >= 0.999)) if audio.size else 0.0, 6),
         "rms_dbfs": round(rms_dbfs, 2) if math.isfinite(rms_dbfs) else None,
         "non_silent": bool(finite and rms_dbfs > SILENCE_DBFS),
@@ -60,32 +60,70 @@ def f0_contour(path: Path) -> np.ndarray:
     return np.where(voiced, f0, np.nan)
 
 
-def compare_f0(source: Path, converted: Path, semitone_shift: float) -> dict:
-    src, out = f0_contour(source), f0_contour(converted)
+def _round_or_none(value: float, digits: int) -> float | None:
+    return round(float(value), digits) if math.isfinite(value) else None
+
+
+def compare_contours(src: np.ndarray, out: np.ndarray, semitone_shift: float,
+                     length_adjust: float = 1.0, auto_f0_adjust: bool = False) -> dict:
+    """Compare two F0 contours (NaN = unvoiced) frame by frame at the same index.
+
+    Same-index frames only correspond when the output keeps the source timing,
+    i.e. length_adjust == 1; otherwise no metrics are computed. Even then this
+    measures pitch agreement under that alignment only, not phoneme/onset timing.
+    With auto_f0_adjust upstream moves the pitch to the reference register, so
+    the fixed requested shift is not a valid expectation and cents errors are skipped.
+    """
+    result = {
+        "method": f"librosa.pyin {F0_SR} Hz, hop {F0_HOP}, 65-1100 Hz; frames aligned by index (no time warping)",
+        "expected_shift_semitones": None if auto_f0_adjust else semitone_shift,
+    }
+    if not math.isclose(length_adjust, 1.0):
+        result["not_comparable_reason"] = (
+            f"length_adjust={length_adjust} changes output timing; same-index frames do not correspond")
+        return result
     frames = min(len(src), len(out))
     src, out = src[:frames], out[:frames]
     both = ~np.isnan(src) & ~np.isnan(out)
     either = ~np.isnan(src) | ~np.isnan(out)
-    result = {
-        "method": f"librosa.pyin {F0_SR} Hz, hop {F0_HOP}, 65-1100 Hz; frames aligned by index",
+    result.update({
         "frames_compared": int(frames),
         "source_voiced_ratio": round(float(np.mean(~np.isnan(src))), 4) if frames else None,
         "converted_voiced_ratio": round(float(np.mean(~np.isnan(out))), 4) if frames else None,
         "voicing_overlap_iou": round(float(both.sum() / either.sum()), 4) if either.any() else None,
-        "expected_shift_semitones": semitone_shift,
-    }
-    if both.sum() >= 10:
-        cents = 1200 * np.log2(out[both] / src[both]) - 100 * semitone_shift
-        # Octave errors are reported separately so they do not hide in the median.
-        result.update({
-            "median_abs_cents_error": round(float(np.median(np.abs(cents))), 1),
-            "within_50_cents_ratio": round(float(np.mean(np.abs(cents) <= 50)), 4),
-            "octave_error_ratio": round(float(np.mean(np.abs(cents) >= 600)), 4),
-            "f0_correlation": round(float(np.corrcoef(np.log2(src[both]), np.log2(out[both]))[0, 1]), 4),
-            "source_median_hz": round(float(np.nanmedian(src)), 1),
-            "converted_median_hz": round(float(np.nanmedian(out)), 1),
-        })
+    })
+    if both.sum() < 10:
+        result["not_comparable_reason"] = "fewer than 10 frames voiced in both"
+        return result
+    log_src, log_out = np.log2(src[both]), np.log2(out[both])
+    constant = np.ptp(log_src) == 0 or np.ptp(log_out) == 0
+    result.update({
+        "voiced_frames_both": int(both.sum()),
+        # Pearson correlation is undefined for a flat contour; report null rather than NaN.
+        "f0_correlation": None if constant else _round_or_none(np.corrcoef(log_src, log_out)[0, 1], 4),
+        "source_median_hz": round(float(np.median(src[~np.isnan(src)])), 1),
+        "converted_median_hz": round(float(np.median(out[~np.isnan(out)])), 1),
+    })
+    if auto_f0_adjust:
+        result["cents_not_comparable_reason"] = (
+            "auto_f0_adjust shifts pitch toward the reference; the requested semitone shift is not the expectation")
+        return result
+    cents = 1200 * (log_out - log_src) - 100 * semitone_shift
+    # Octave errors are reported separately so they do not hide in the median.
+    result.update({
+        "median_abs_cents_error": round(float(np.median(np.abs(cents))), 1),
+        "within_50_cents_ratio": round(float(np.mean(np.abs(cents) <= 50)), 4),
+        "octave_error_ratio": round(float(np.mean(np.abs(cents) >= 600)), 4),
+    })
     return result
+
+
+def compare_f0(source: Path, converted: Path, semitone_shift: float,
+               length_adjust: float = 1.0, auto_f0_adjust: bool = False) -> dict:
+    if not math.isclose(length_adjust, 1.0):  # skip the slow pYIN pass when nothing can be compared
+        return compare_contours(np.array([]), np.array([]), semitone_shift, length_adjust, auto_f0_adjust)
+    return compare_contours(f0_contour(source), f0_contour(converted), semitone_shift,
+                            length_adjust, auto_f0_adjust)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
     analyze.add_argument("--reference", type=Path, required=True)
     analyze.add_argument("--converted", type=Path, required=True)
     analyze.add_argument("--semitone-shift", type=float, default=0.0)
+    analyze.add_argument("--length-adjust", type=float, default=1.0)
+    analyze.add_argument("--auto-f0-adjust", action="store_true")
     analyze.add_argument("--skip-f0", action="store_true")
     for command in (prep, analyze):
         command.add_argument("--json", type=Path, required=True)
@@ -113,9 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         report["duration_ratio_converted_to_source"] = round(
             report["converted"]["duration_seconds"] / max(report["source"]["duration_seconds"], 1e-9), 4)
         if not args.skip_f0:
-            report["f0_source_vs_converted"] = compare_f0(args.source, args.converted, args.semitone_shift)
+            report["f0_source_vs_converted"] = compare_f0(args.source, args.converted, args.semitone_shift,
+                                                         args.length_adjust, args.auto_f0_adjust)
     args.json.parent.mkdir(parents=True, exist_ok=True)
-    args.json.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    args.json.write_text(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False), flush=True)
     return 0
 

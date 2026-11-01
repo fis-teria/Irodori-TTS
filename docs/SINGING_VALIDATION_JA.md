@@ -26,18 +26,28 @@
 - 全実行で自動チェック(44.1 kHz、有限値、非無音、長さ ±5%)に合格。
 - D: F0 中央値がソース 327.6 Hz → 出力 367.7 Hz(+2 半音の理論値 367.7 Hz と一致)。
 - A の Irodori 参照生成は 34 秒(モデル読み込み込み)。Irodori と Seed-VC は別プロセスで順に実行。
-- F0 は librosa pYIN(16 kHz, 10 ms)でソースと出力をフレーム位置そのままで比較した値。「時間方向のずれが無いこと」と「音高の追従」を示します。
+- F0 は librosa pYIN(16 kHz, 10 ms)でソースと出力をフレーム位置そのままで比較した値。示すのは**この対応付けのもとでの音高の一致**だけです。
+  時間方向のずれが無いことの証明にはならず、発音・立ち上がりのタイミングや長い区間でのずれ(ドリフト)は別の確認と試聴が必要です。
 - Seed-VC 時間はモデル読み込みを含み、upstream 表示の RTF は A で 0.21。
 
 ## その他に確認したこと
 
-- 単体テスト `tests/test_singing_pipeline.py`(16 件, unittest)合格: 参照指定の排他、存在しないファイル、F0 条件なし指定の拒否
+- 単体テスト `tests/test_singing_pipeline.py`(25 件, unittest, GPU 不要)合格: 参照指定の排他、存在しないファイル、F0 条件なし指定の拒否
   (話し声モデルへの暗黙の切り替えなし)、空白・日本語パスが 1 引数のまま渡ること、歌唱既定値、子プロセスの失敗/起動不可、
-  JSON 設定ファイル、UTF-8 テキストファイル、Seed-VC config の検査(upstream の歌唱 preset を含む)。
+  JSON 設定ファイル(JSON の offline / f0_report は `--online` / `--no-f0-report` 指定時のみ上書き)、UTF-8 テキストファイル、
+  Seed-VC config の検査(upstream の歌唱 preset、44.1 kHz BigVGAN 以外や不正な vocoder 設定の拒否)、
+  出力先と入力の衝突(同一パス・ハードリンク)を書き込み前に拒否し入力のバイト列が不変であること、
+  実行ごとの一時フォルダで既存の `seedvc_raw\*.wav` などを残すこと、壊れた/想定外のレポートでも metadata に failed が残ること、
+  F0 比較(length-adjust ≠ 1 と auto-f0-adjust では比較不可の理由を記録、平坦な F0 でも NaN を出さない)。
 - `run_singing.bat` 経由で存在しない入力を指定すると、モデルを読み込まずに理由を列挙して終了コード 1。
 - `setup_singing.ps1 -SeedFrom <既存ワークスペース>` を構築済みの状態で再実行し、終了コード 0(環境・モデルを再利用、Seed-VC 資産はオフライン確認で完了)。
 - 実行時は既定でオフライン(`HF_HUB_OFFLINE=1`)。上記 A–D はすべてオフラインで実行。
 - `python -m compileall singing_vc` 成功。
+- 出力処理の修正後に短いスモーク 1 回(A の `source.wav` 先頭 5 秒 + A の `reference.wav`、既存 WAV 参照、CLI):
+  succeeded、44.1 kHz・4.99 秒、Seed-VC 19.4 秒 / ピーク VRAM 2.3 GB。一時フォルダ `seedvc_raw_*` は移動後に削除され、
+  入力 2 ファイルの SHA256 は実行前後で一致。
+  (最初の試行は Git Bash のパイプへ出力したため、進捗表示の文字を cp932 で書けず親プロセスが停止し、metadata に failed が記録されました。
+  コンソール以外(パイプ・リダイレクト)へ出力する場合は `PYTHONUTF8=1` を設定してください。この既存の制限は未修正です。)
 
 ## 未検証・注意点
 
